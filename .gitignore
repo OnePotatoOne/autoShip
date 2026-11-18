@@ -1,24 +1,24 @@
-# 编译产物与二进制文件
-bin/
-dist/
-release/
-server/internal/static/dist/*
-!server/internal/static/dist/.gitkeep
+# 根目录编译产物与发布临时目录（使用根路径锚定，避免误匹配业务源码子包如 internal/modules/release）
+/bin/
+/dist/
+/release/
+/server/internal/static/dist/*
+!/server/internal/static/dist/.gitkeep
 *.exe
 *.out
 *.test
 
 # 前端依赖与缓存
-web/node_modules/
-web/.angular/
-web/dist/
+/web/node_modules/
+/web/.angular/
+/web/dist/
 
 # 运行时数据、证书、制品与日志（严禁入库）
-data/
-logs/
-secrets/
-configs/*.yaml
-!configs/*.example.yaml
+/data/
+/logs/
+/secrets/
+/configs/*.yaml
+!/configs/*.example.yaml
 *.pem
 *.key
 *.crt
