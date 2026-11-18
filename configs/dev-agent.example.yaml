@@ -1,0 +1,141 @@
+# autoShip Mac 开发 Agent 配置文件示例（UTF-8）
+# 对应设计文档 docs/autoship-design.md 第 7.5、7.6、8 节
+
+agentId: "mac-dev-agent-01"
+serverUrl: "https://100.64.0.10:8444"
+serverWsPath: "/agent/v1/dev/ws"
+caFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+bootstrapToken: ""
+serverPublicKeyB64: ""
+tailnetIp: "100.64.0.20"
+rootDir: "~/autoship"
+maxParallelTasks: 1
+keychainService: "autoship.devagent"
+httpProxy: ""
+chromeBinaryPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+feishuWebhookUrl: ""
+
+# 模型受限中继服务（仅监听 tailnet 地址，供 Server 客服澄清与自动分拣调用）
+relay:
+  enabled: true
+  listenAddr: "100.64.0.20:8445"
+  certFile: "~/autoship/pki/agent.crt"
+  keyFile: "~/autoship/pki/agent.key"
+  maxTokensLimit: 4096
+  requestsPerMinute: 60
+  burst: 15
+  intakeConcurrency: 4
+  backgroundConcurrency: 2
+  roleModels:
+    intake:
+      profileName: "local-hub"
+      modelName: "deepseek-v4.1-flash"
+    triage:
+      profileName: "local-hub"
+      modelName: "deepseek-v4.1-flash"
+
+# 开发引擎模型池与预算配置（顺序故障转移）
+models:
+  profiles:
+    - name: "local-hub"
+      baseUrl: "http://127.0.0.1:8788/v1"
+      model: "deepseek-v4.1-flash"
+      format: "openai"
+      keychainAccount: "llm.local-hub"
+      timeoutSeconds: 180
+      maxRetries: 2
+  roleMapping:
+    coder: ["local-hub"]
+    reviewer: ["local-hub"]
+    auditor: ["local-hub"]
+    changelog: ["local-hub"]
+  defaultBudget:
+    maxTokens: 500000
+    maxDurationMinutes: 60
+    maxTurns: 80
+
+# 测试库与预览库管理账号（仅授权各产品前缀库，与 Agent 状态库隔离）
+workspaceDb:
+  enabled: false
+  host: "127.0.0.1"
+  port: 3306
+  adminUser: "autoship_test_admin"
+  keychainAccount: "db.workspace_admin"
+
+# 开发 Agent 自身状态库（独立库 autoship_agent，被测代码与模型无权访问）
+stateDb:
+  enabled: false
+  host: "127.0.0.1"
+  port: 3306
+  user: "autoship_agent_state"
+  keychainAccount: "db.agent_state"
+  dbName: "autoship_agent"
+
+# 测试与预览服务动态端口池
+portPool:
+  startPort: 19000
+  endPort: 19200
+
+preview:
+  idleTimeoutHours: 24
+
+# 本地产品档案示例（运行时可由 autoShip Server 下发同步）
+products:
+  - productCode: "demo-app"
+    name: "示例业务系统"
+    repoUrl: "git@github.com:example/demo-app.git"
+    defaultBranch: "main"
+    deployKeyPath: "~/.ssh/autoship_demo_app_deploy"
+    githubOwner: "example"
+    githubRepo: "demo-app"
+    githubPatAccount: "github.pat.demo-app"
+    installCmd:
+      cmd: "go mod download"
+      timeoutSeconds: 300
+    buildCmd:
+      cmd: "go build ./..."
+      timeoutSeconds: 600
+    testCmd:
+      cmd: "go test ./..."
+      timeoutSeconds: 900
+    lintCmd:
+      cmd: "go vet ./..."
+      timeoutSeconds: 300
+    modules:
+      auth:
+        - "server/internal/modules/auth"
+        - "web/src/app/auth"
+      order:
+        - "server/internal/modules/order"
+        - "web/src/app/order"
+    publicZoneDirs:
+      - "server/pkg"
+      - "web/src/app/shared"
+      - "deploy"
+    protectedPaths: []
+    codingRules:
+      - "所有类、函数、方法必须有完整中文注释"
+      - "所有新建数据库表必须有表注释，所有字段必须有字段注释"
+      - "统一使用 UTF-8 编码，严禁擅自升级已有依赖"
+    sandbox:
+      mode: "protected"
+      extraWritePaths: []
+    preview:
+      startCmd: "./bin/demo-app"
+      portCount: 1
+      supportsExternalTls: false
+      portEnvVar: "PORT"
+      dbDsnEnvVar: "DATABASE_DSN"
+      dbPrefix: "demo_app"
+      seedCmd: ""
+      healthPath: "/healthz"
+      pagesToInspect:
+        - "/"
+    release:
+      changelogFile: "CHANGELOG.md"
+      preMergeChecks:
+        - "go test ./..."
+      ciWorkflowName: "release.yml"
+      artifactAssetName: "demo-app-linux-amd64"
+      hookRepoPath: "deploy/ctl.sh"
+      minAgentVersion: "v0.1.0"

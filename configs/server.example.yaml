@@ -1,0 +1,40 @@
+# autoShip Server 配置示例（UTF-8）
+# 后台只监听 tailnet 地址，不上公网；公网口只放行接入方后端与更新 Agent 的固定 IP
+tailnetListenAddr: "127.0.0.1:8444"
+tailnetSanIPs:
+  - "127.0.0.1"
+
+publicListenAddr: "0.0.0.0:8443"
+publicSanIPs:
+  - "127.0.0.1"
+publicAllowIPs: []
+
+dataDir: "./data"
+cookiePrefix: "autoship_"
+artifactKeepCount: 10
+
+database:
+  host: "127.0.0.1"
+  port: 3306
+  user: "autoship"
+  password: ""
+  dbName: "autoship"
+  maxOpenConns: 32
+  maxIdleConns: 8
+  connMaxLifetime: 1800
+
+llm:
+  # relay: 经 tailnet 请求本机 Mac 开发 Agent 的受限中继接口（默认）
+  # direct: 直连 OpenAI 兼容接口（配置切换，无需改代码）
+  mode: "relay"
+  directBaseURL: ""
+  directApiKeyEnc: ""
+  intakeModel: "intake"
+  triageModel: "triage"
+  maxSessionTokens: 64000
+  maxRequestTokens: 4096
+  maskPIIBeforeSend: true
+
+notify:
+  enabled: false
+  feishuWebhookURL: ""

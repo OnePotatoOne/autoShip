@@ -1,0 +1,121 @@
+# release.yml —— 自动编译 x86_64 Linux 服务端/更新套件与 macOS 开发套件并发布 GitHub Release
+# 文件编码: UTF-8
+#
+# 触发方式：
+#   1. 推送版本标签：git tag v0.1.0 && git push origin v0.1.0
+#   2. 在 GitHub Actions 页面手动触发（workflow_dispatch），填写版本号（如 v0.1.0）
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号（以 v 开头，如 v0.1.0）"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    name: build linux-amd64 & darwin-arm64 release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GO_VERSION: "1.27.3"
+      NODE_VERSION: "24.21.0"
+    steps:
+      - name: 确定版本号
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            VERSION="${REF_NAME}"
+          fi
+          if ! printf '%s' "${VERSION}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "版本号格式不正确：${VERSION}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: 检出源码
+        uses: actions/checkout@v7.0.1
+
+      - name: 提取 CHANGELOG.md 版本说明
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v head="## [${VERSION}]" 'index($0, "## [") == 1 { if (found) exit; if (index($0, head) == 1) { found = 1; next } } found { print }' CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/release-notes.md"; then
+            echo "CHANGELOG.md 中缺少 ## [${VERSION}] 小节或内容为空，请先补写变更日志。" >&2
+            exit 1
+          fi
+          cat "${RUNNER_TEMP}/release-notes.md"
+
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+
+      - name: 安装 Node.js LTS
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 构建前端并内嵌至服务端
+        run: make embed-web
+
+      - name: 运行发布前测试校验
+        run: |
+          make vet
+          cd server && go test -count=1 ./pkg/... ./internal/database/... ./internal/modules/... ./internal/router/... ./internal/updateagent/...
+
+      - name: 交叉编译 x86_64 Linux 与 macOS 全套单文件产物并生成 SHA256SUMS
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cd server
+          # x86_64 Linux 服务端（内嵌前端）与产品服务器更新套件
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-server-${VERSION}-linux-amd64" ./cmd/autoship-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-agent-${VERSION}-linux-amd64" ./cmd/autoship-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-apply-${VERSION}-linux-amd64" ./cmd/autoship-apply
+          # macOS Apple Silicon 开发套件
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-dev-agent-${VERSION}-darwin-arm64" ./cmd/autoship-dev-agent
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-release-${VERSION}-darwin-arm64" ./cmd/autoship-release
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o "../release/autoship-bench-${VERSION}-darwin-arm64" ./cmd/autoship-bench
+          cd ../release
+          chmod +x autoship-*
+          sha256sum autoship-* > SHA256SUMS
+          ls -lh
+          file autoship-*-linux-amd64
+          cat SHA256SUMS
+
+      - name: 创建并上传 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "${VERSION}" release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md"

@@ -1,0 +1,70 @@
+# ci.yml —— 每次推送与 Pull Request 自动执行敏感信息拦截、前端构建、Go 静态检查/单元测试及 x86_64 Linux 编译验证
+# 文件编码: UTF-8
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - "autoship/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: check + test + build linux-amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GO_VERSION: "1.27.3"
+      NODE_VERSION: "24.21.0"
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v7.0.1
+
+      - name: 敏感凭据与 Webhook 泄露门禁检查
+        run: |
+          set -euo pipefail
+          if git grep -nIE 'open\.feishu\.cn/open-apis/bot/v2/hook/|larksuite\.com/open-apis/bot/v2/hook/' -- . ; then
+            echo "::error::检测到真实飞书 Webhook 地址被提交入库！"
+            exit 1
+          fi
+          if git ls-files | grep -Ei '^(data/|secrets/|bin/|.*\.(pem|key|crt|p12|secret|env)$)' ; then
+            echo "::error::检测到证书私钥或敏感环境文件被跟踪入库！"
+            exit 1
+          fi
+          if git ls-files 'configs/*.yaml' | grep -Ev '\.example\.yaml$' ; then
+            echo "::error::configs/ 下仅允许提交 *.example.yaml 示例模板！"
+            exit 1
+          fi
+
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+
+      - name: 安装 Node.js LTS
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 构建 Angular 管理后台并内嵌至服务端静态目录
+        run: make embed-web
+
+      - name: 运行 Go 静态检查与全量单元测试
+        run: |
+          make vet
+          cd server && go test -count=1 ./pkg/... ./internal/database/... ./internal/modules/... ./internal/router/... ./internal/updateagent/...
+
+      - name: 编译 x86_64 Linux (linux/amd64) 服务端与更新 Agent 全套产物
+        run: |
+          make build-linux-agents VERSION=ci-verify
+          cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=ci-verify" -o ../bin/linux-amd64/autoship-server ./cmd/autoship-server
+          file bin/linux-amd64/*
+          ls -lh bin/linux-amd64/*

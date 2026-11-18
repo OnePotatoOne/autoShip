@@ -1,0 +1,73 @@
+# ==============================================================================
+# autoShip 产品服务器更新 Agent 配置示例（对应设计文档 9.2 ~ 9.5 节）
+# 默认部署位置：/etc/autoship/update-agent.yaml（权限建议 root:autoship-agent 0640）
+# 安全约束：
+#   1. 更新 Agent 全程不持有任何数据库账号密码（数据库备份由产品部署钩子在 root 下完成）；
+#   2. serverURL 必须为 https://，并使用 caFingerprint 固定 autoShip 根 CA SHA-256 指纹；
+#   3. release.pub 与 server.pub 由 root 持有（0644），常驻进程仅只读使用。
+# ==============================================================================
+
+# 更新 Agent 自身语义化版本号
+agentVersion: "v0.1.0"
+
+# autoShip Server 公网机器对机器入口（必须为 HTTPS，禁止明文 HTTP）
+serverURL: "https://203.0.113.10:8443"
+
+# autoShip 自建根 CA 证书的 SHA-256 指纹（64 位十六进制，换 IP 或轮换服务端叶证书时无需修改本配置）
+caFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# 管理后台新建更新 Agent 时生成的 15 分钟有效一次性注册令牌（首次启动生成本地 Ed25519 私钥并登记成功后可清空）
+bootstrapToken: "asreg_replace_with_one_time_token"
+
+# 绑定的部署目标主键 ID（填 0 时自动采用首次注册返回的目标 ID）
+targetId: 1
+
+# 绑定的产品唯一编码（与制品包签名清单中的 productCode 强核对）
+productCode: "seccenter"
+
+# root 持有的发布清单 Ed25519 验签公钥文件路径
+releasePubPath: "/etc/autoship/release.pub"
+
+# root 持有的 Server 动作票据 Ed25519 验签公钥文件路径
+serverPubPath: "/etc/autoship/server.pub"
+
+# autoship-agent 本地持久化目录（存放 0600 权限的 identity.json、journal.json 与 deploy.lock）
+stateDir: "/var/lib/autoship-agent"
+
+# 与 autoship-apply 约定的固定暂存目录（存放 ticket.json 与 bundle.tar.gz）
+stagingDir: "/var/lib/autoship-agent/staging/current"
+
+# 数据库备份专用根目录（单次部署子目录为 /var/backups/autoship/<productCode>/<deploymentId>，0700）
+backupRootDir: "/var/backups/autoship"
+
+# 数据库备份目录存储上限字节数（默认 10 GiB；超出上限时触发飞书和后台告警，不自动删除旧备份）
+backupQuotaBytes: 10737418240
+
+# 部署前要求磁盘至少保留的基础可用字节数（默认 512 MiB）
+minFreeDiskBytes: 536870912
+
+# 需要备份数据库时的最小预估单次备份空间字节数（默认 256 MiB；实际可用空间不足时阻断部署）
+estimatedDbBackupBytes: 268435456
+
+# root 提权小工具路径与无通配 sudo 调用开关
+applyBinPath: "/usr/local/sbin/autoship-apply"
+sudoBinPath: "/usr/bin/sudo"
+useSudo: true
+
+# 本机产品免登录健康检查接口（返回 status、version、migrationDone 及各模块只读探测 probes）
+healthCheckURL: "http://127.0.0.1:8080/api/healthz"
+healthCheckInsecureTLS: false
+
+# 上线健康检查轮询间隔（毫秒）与等待超时（秒）；含数据库迁移的版本自动启用更长的 migrationTimeoutSec
+healthCheckIntervalMs: 2000
+healthCheckTimeoutSec: 30
+migrationTimeoutSec: 180
+
+# 心跳周期（默认 30 秒）与长轮询/下载超时（秒）
+heartbeatIntervalSec: 30
+pollTimeoutSec: 35
+httpTimeoutSec: 30
+downloadTimeoutSec: 600
+
+# 是否允许首次全新部署时目标服务尚未启动（生产已上线环境建议保持 false）
+allowFirstInstallWhenDown: false
