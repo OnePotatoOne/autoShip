@@ -206,6 +206,28 @@ export class AuthService {
   }
 
   /**
+   * 调用 `/api/v1/admin/auth/password` 修改当前已登录管理员的登录密码。
+   * @param oldPassword 当前原登录密码
+   * @param newPassword 新登录密码（不限制长度或复杂度，非空即可）
+   * @returns 返回修改结果的 Observable 流；由主布局顶栏修改密码弹窗调用
+   */
+  changePassword(oldPassword: string, newPassword: string): Observable<{ updated: boolean }> {
+    return this.http
+      .post<ApiEnvelope<{ updated: boolean }>>('/api/v1/admin/auth/password', {
+        oldPassword,
+        newPassword
+      })
+      .pipe(
+        map((env) => {
+          if (env.code !== 0) {
+            throw new Error(env.message || '修改密码失败');
+          }
+          return env.data;
+        })
+      );
+  }
+
+  /**
    * 调用 `/api/v1/admin/auth/logout` 注销当前会话并清理前端缓存状态。
    * @returns 返回注销结果的 Observable 流
    */

@@ -86,3 +86,18 @@ func TestOTPAndRecovery(t *testing.T) {
 		t.Fatalf("恢复码哈希不一致")
 	}
 }
+
+// TestSimplePasswordHashAndVerify 验证不限制复杂度的简单口令（如 123456）能够正常计算哈希与比对。
+// 参数 t 为 Go 标准测试上下文；无返回值。
+func TestSimplePasswordHashAndVerify(t *testing.T) {
+	hash, err := crypto.HashPassword("123456")
+	if err != nil {
+		t.Fatalf("HashPassword(123456) 失败: %v", err)
+	}
+	if !crypto.CheckPassword(hash, "123456") {
+		t.Fatalf("CheckPassword(123456) 期望匹配成功")
+	}
+	if crypto.CheckPassword(hash, "654321") {
+		t.Fatalf("错误口令不应匹配通过")
+	}
+}

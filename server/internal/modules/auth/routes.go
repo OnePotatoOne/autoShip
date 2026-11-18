@@ -17,10 +17,11 @@ func RegisterPublicRoutes(rg *gin.RouterGroup, h *handler.Handler) {
 	rg.POST("/auth/login", h.Login)
 }
 
-// RegisterProtectedRoutes 注册需要有效管理员会话与 CSRF 校验的 OTP 绑定与登出接口。
+// RegisterProtectedRoutes 注册需要有效管理员会话与 CSRF 校验的 OTP 绑定、修改密码与登出接口。
 // 参数 rg 为 `/api/v1/admin` 受保护组，h 为认证控制器；无返回值。
 func RegisterProtectedRoutes(rg *gin.RouterGroup, h *handler.Handler) {
 	rg.POST("/auth/otp/setup", h.SetupOTP)
 	rg.POST("/auth/otp/enable", h.EnableOTP)
+	rg.POST("/auth/password", h.ChangePassword)
 	rg.POST("/auth/logout", h.Logout)
 }

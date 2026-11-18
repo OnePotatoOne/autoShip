@@ -239,6 +239,29 @@ func (h *Handler) EnableOTP(c *gin.Context) {
 	response.OK(c, gin.H{"enabled": true})
 }
 
+// ChangePassword 为当前已登录管理员校验原密码并修改登录密码（不限制新密码长度或复杂度，非空即可）。
+// 参数 c 为 Gin 请求上下文；修改成功输出 updated=true，通过路由 POST /api/v1/admin/auth/password 调用。
+func (h *Handler) ChangePassword(c *gin.Context) {
+	var req struct {
+		OldPassword string `json:"oldPassword"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请求参数格式非法")
+		return
+	}
+	uid := c.GetUint64("autoship.admin_user_id")
+	if err := h.svc.ChangePassword(uid, req.OldPassword, req.NewPassword); err != nil {
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			response.BadRequest(c, "当前原密码不正确")
+			return
+		}
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"updated": true})
+}
+
 // Logout 注销当前服务端会话并清空浏览器 Cookie。
 // 参数 c 为 Gin 请求上下文；输出成功响应。
 func (h *Handler) Logout(c *gin.Context) {

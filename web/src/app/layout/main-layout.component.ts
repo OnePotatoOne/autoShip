@@ -1,11 +1,16 @@
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
 import { NzBadgeModule } from 'ng-zorro-antd/badge';
 import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzFormModule } from 'ng-zorro-antd/form';
 import { NzIconModule } from 'ng-zorro-antd/icon';
+import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalModule } from 'ng-zorro-antd/modal';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzTooltipModule } from 'ng-zorro-antd/tooltip';
 import { AdminApiService } from '../core/services/admin-api.service';
@@ -29,11 +34,15 @@ interface NavItem {
   standalone: true,
   imports: [
     CommonModule,
+    FormsModule,
     RouterOutlet,
     RouterLink,
     RouterLinkActive,
     NzIconModule,
     NzButtonModule,
+    NzFormModule,
+    NzInputModule,
+    NzModalModule,
     NzTagModule,
     NzBadgeModule,
     NzTooltipModule
@@ -128,6 +137,11 @@ interface NavItem {
               <span>{{ auth.currentUser()?.username || 'admin' }}</span>
             </div>
 
+            <button nz-button nzType="default" nzSize="small" (click)="openPasswordModal()">
+              <span nz-icon nzType="lock"></span>
+              <span>修改密码</span>
+            </button>
+
             <button nz-button nzType="default" nzSize="small" (click)="handleLogout()">
               <span nz-icon nzType="logout"></span>
               <span>退出</span>
@@ -140,6 +154,63 @@ interface NavItem {
         </main>
       </div>
     </div>
+
+    <!-- 修改登录密码弹窗 -->
+    <nz-modal
+      [nzVisible]="pwdModalVisible()"
+      nzTitle="修改管理员登录密码"
+      nzOkText="保存新密码"
+      nzCancelText="取消"
+      [nzOkLoading]="pwdSubmitting()"
+      (nzOnCancel)="closePasswordModal()"
+      (nzOnOk)="submitPasswordChange()"
+    >
+      <ng-container *nzModalContent>
+        <form nz-form nzLayout="vertical">
+          <nz-form-item>
+            <nz-form-label nzRequired>当前原密码</nz-form-label>
+            <nz-form-control>
+              <input
+                nz-input
+                type="password"
+                name="oldPwd"
+                [(ngModel)]="pwdForm.oldPassword"
+                placeholder="请输入当前登录密码"
+                autocomplete="current-password"
+              />
+            </nz-form-control>
+          </nz-form-item>
+
+          <nz-form-item>
+            <nz-form-label nzRequired>新密码</nz-form-label>
+            <nz-form-control>
+              <input
+                nz-input
+                type="password"
+                name="newPwd"
+                [(ngModel)]="pwdForm.newPassword"
+                placeholder="请输入新密码（不强制复杂度）"
+                autocomplete="new-password"
+              />
+            </nz-form-control>
+          </nz-form-item>
+
+          <nz-form-item>
+            <nz-form-label nzRequired>确认新密码</nz-form-label>
+            <nz-form-control>
+              <input
+                nz-input
+                type="password"
+                name="confirmNewPwd"
+                [(ngModel)]="pwdForm.confirmPassword"
+                placeholder="请再次输入新密码确认一致"
+                autocomplete="new-password"
+              />
+            </nz-form-control>
+          </nz-form-item>
+        </form>
+      </ng-container>
+    </nz-modal>
   `,
   styles: [
     `
@@ -392,6 +463,15 @@ export class MainLayoutComponent implements OnInit {
   readonly pendingDeployCount = signal<number>(0);
   readonly refreshing = signal<boolean>(false);
 
+  /** 修改密码弹窗开关与提交态 */
+  readonly pwdModalVisible = signal<boolean>(false);
+  readonly pwdSubmitting = signal<boolean>(false);
+  pwdForm = {
+    oldPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  };
+
   /**
    * 初始化布局顶栏路由监听与全局运行指标加载。
    * @returns void
@@ -422,6 +502,66 @@ export class MainLayoutComponent implements OnInit {
       },
       error: () => {
         this.refreshing.set(false);
+      }
+    });
+  }
+
+  /**
+   * 打开顶栏管理员修改密码弹窗并重置表单输入。
+   * @returns void
+   */
+  openPasswordModal(): void {
+    this.pwdForm = {
+      oldPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    };
+    this.pwdModalVisible.set(true);
+  }
+
+  /**
+   * 关闭管理员修改密码弹窗。
+   * @returns void
+   */
+  closePasswordModal(): void {
+    this.pwdModalVisible.set(false);
+  }
+
+  /**
+   * 校验并提交修改密码表单（不限制新密码长度或复杂度，非空且两次一致即可）。
+   * @returns void
+   */
+  submitPasswordChange(): void {
+    if (!this.pwdForm.oldPassword) {
+      this.message.warning('请输入当前原密码');
+      return;
+    }
+    if (!this.pwdForm.newPassword) {
+      this.message.warning('新密码不能为空');
+      return;
+    }
+    if (this.pwdForm.newPassword !== this.pwdForm.confirmPassword) {
+      this.message.warning('两次输入的新密码不一致');
+      return;
+    }
+
+    this.pwdSubmitting.set(true);
+    this.auth.changePassword(this.pwdForm.oldPassword, this.pwdForm.newPassword).subscribe({
+      next: () => {
+        this.pwdSubmitting.set(false);
+        this.pwdModalVisible.set(false);
+        this.message.success('登录密码修改成功');
+      },
+      error: (err: unknown) => {
+        this.pwdSubmitting.set(false);
+        if (err instanceof HttpErrorResponse) {
+          const msg = (err.error as { message?: string } | null)?.message;
+          if (msg) {
+            this.message.error(msg);
+            return;
+          }
+        }
+        this.message.error(err instanceof Error ? err.message : '修改密码失败');
       }
     });
   }

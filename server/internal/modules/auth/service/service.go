@@ -275,6 +275,25 @@ func (s *Service) EnableOTP(userID uint64, code string) error {
 	})
 }
 
+// ChangePassword 校验当前已登录管理员的原密码并更新为新密码（不强制限制密码长度或复杂度，非空即可）。
+// 参数 userID 为当前管理员 ID，oldPassword 为原登录密码，newPassword 为新登录密码；成功返回 nil，原密码错误返回 ErrInvalidCredentials，通过 svc.ChangePassword(uid, oldPwd, newPwd) 调用。
+func (s *Service) ChangePassword(userID uint64, oldPassword, newPassword string) error {
+	if newPassword == "" {
+		return errors.New("新密码不能为空")
+	}
+	pwdHash, err := crypto.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return s.repo.WithLockedUser(userID, func(u *model.User) error {
+		if !crypto.CheckPassword(u.PasswordHash, oldPassword) {
+			return ErrInvalidCredentials
+		}
+		u.PasswordHash = pwdHash
+		return nil
+	})
+}
+
 // AuthenticateSession 根据请求携带的明文会话 Cookie 查找有效会话与关联用户。
 // 参数 rawSessionToken 为 Cookie 值；有效时返回会话与用户指针，无效返回 (nil, nil, nil)。
 func (s *Service) AuthenticateSession(rawSessionToken string) (*model.AdminSession, *model.User, error) {
