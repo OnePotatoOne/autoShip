@@ -92,8 +92,8 @@ func (s *Service) InitialSetup(username, password, clientIP, userAgent string) (
 		return nil, errors.New("系统已完成初始化，禁止重复创建初始管理员")
 	}
 	username = strings.TrimSpace(username)
-	if len(username) < 3 || len(password) < 8 {
-		return nil, errors.New("用户名至少 3 个字符，密码至少 8 个字符")
+	if username == "" || password == "" {
+		return nil, errors.New("用户名和密码不能为空")
 	}
 	pwdHash, err := crypto.HashPassword(password)
 	if err != nil {

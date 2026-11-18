@@ -159,7 +159,7 @@ type AuthViewMode = 'checking' | 'db-setup' | 'setup' | 'otp-bind' | 'login';
                         nz-input
                         name="setupUsername"
                         [(ngModel)]="setupUsername"
-                        placeholder="请输入用户名（至少 3 个字符，如 admin）"
+                        placeholder="请输入管理员用户名（如 admin）"
                         autocomplete="username"
                       />
                     </nz-input-group>
@@ -175,7 +175,7 @@ type AuthViewMode = 'checking' | 'db-setup' | 'setup' | 'otp-bind' | 'login';
                         type="password"
                         name="setupPassword"
                         [(ngModel)]="setupPassword"
-                        placeholder="请设置高强度密码（至少 8 个字符）"
+                        placeholder="请输入登录密码"
                         autocomplete="new-password"
                       />
                     </nz-input-group>
@@ -681,12 +681,12 @@ export class LoginComponent implements OnInit {
   submitInitialSetup(): void {
     this.errorMsg.set('');
     const username = this.setupUsername.trim();
-    if (username.length < 3) {
-      this.errorMsg.set('管理员用户名至少需要 3 个字符');
+    if (!username) {
+      this.errorMsg.set('管理员用户名不能为空');
       return;
     }
-    if (this.setupPassword.length < 8) {
-      this.errorMsg.set('登录密码至少需要 8 个字符');
+    if (!this.setupPassword) {
+      this.errorMsg.set('登录密码不能为空');
       return;
     }
     if (this.setupPassword !== this.setupConfirmPassword) {

@@ -115,8 +115,8 @@ export class AuthService {
 
   /**
    * 在平台首次启动尚未创建管理员时调用 `/api/v1/admin/auth/setup` 初始化首个管理员账号。
-   * @param username 初始管理员登录名（至少 3 个字符）
-   * @param password 初始管理员登录密码（至少 8 个字符）
+   * @param username 初始管理员登录名
+   * @param password 初始管理员登录密码（不限制长度或复杂度，非空即可）
    * @returns 返回一次性 OTP 绑定密钥、URI、恢复码与会话信息的 Observable 流
    */
   setup(username: string, password: string): Observable<AuthSetupResult> {
