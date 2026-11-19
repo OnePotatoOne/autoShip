@@ -15,11 +15,12 @@ import (
 
 // Service 封装审计日志记录与全局系统设置读写逻辑。
 type Service struct {
-	repo           *repository.Repository
-	cfg            *config.ServerConfig
-	cfgPath        string
-	encKey         []byte
-	publicRebinder func(newAddr string) error
+	repo              *repository.Repository
+	cfg               *config.ServerConfig
+	cfgPath           string
+	encKey            []byte
+	publicRebinder    func(newAddr string) error
+	engineCfgSyncer   func(agyModel, agyEffort string)
 }
 
 // New 创建审计与系统设置业务服务实例。
@@ -37,6 +38,12 @@ func New(repo *repository.Repository, cfg *config.ServerConfig, cfgPath string, 
 // 参数 fn 为接收新 host:port 并在进程内重绑 HTTPS 监听器的回调函数；无返回值，在 main 启动入口注入。
 func (s *Service) SetPublicListenerRebinder(fn func(newAddr string) error) {
 	s.publicRebinder = fn
+}
+
+// SetEngineConfigSyncer 注入向在线开发 Agent 同步默认 Antigravity 模型与推理强度的回调函数。
+// 参数 fn 为同步回调；无返回值，在 router.Build 阶段注入。
+func (s *Service) SetEngineConfigSyncer(fn func(agyModel, agyEffort string)) {
+	s.engineCfgSyncer = fn
 }
 
 // Record 对详情对象执行脱敏序列化并写入审计表。
@@ -70,14 +77,16 @@ type SystemSettingsView struct {
 	ArtifactKeepCount int                  `json:"artifactKeepCount"` // 制品保留份数
 }
 
-// WorkflowSettingsView 表示面向管理后台展示的需求研发流转自动化配置视图。
+// WorkflowSettingsView 表示面向管理后台展示的需求研发流转自动化与默认 Antigravity 模型配置视图。
 type WorkflowSettingsView struct {
-	AutoStartOnNewRequirement bool `json:"autoStartOnNewRequirement"` // 新增需求是否无需人工确认直接自动进入研发状态
-	AutoStartOnConfirmStatus  bool `json:"autoStartOnConfirmStatus"`  // 人工确认立项改状态（scheduled/in_progress）后是否自动启动开发任务
-	DefaultPlanConfirm        bool `json:"defaultPlanConfirm"`        // 自动触发研发时是否默认开启方案确认门
-	DefaultTokenBudget        int  `json:"defaultTokenBudget"`        // 默认单任务 Token 预算
-	DefaultMaxTurns           int  `json:"defaultMaxTurns"`           // 默认单任务最大轮数
-	DefaultMaxMinutes         int  `json:"defaultMaxMinutes"`         // 默认单任务最大分钟数
+	AutoStartOnNewRequirement bool   `json:"autoStartOnNewRequirement"` // 新增需求是否无需人工确认直接自动进入研发状态
+	AutoStartOnConfirmStatus  bool   `json:"autoStartOnConfirmStatus"`  // 人工确认立项改状态（scheduled/in_progress）后是否自动启动开发任务
+	DefaultPlanConfirm        bool   `json:"defaultPlanConfirm"`        // 自动触发研发时是否默认开启方案确认门
+	DefaultAgyModel           string `json:"defaultAgyModel"`           // 调用 agy 开发时的全局默认模型 ID（空串表示跟随本机 agy 默认）
+	DefaultAgyEffort          string `json:"defaultAgyEffort"`          // 调用 agy 开发时的全局默认推理强度（空串默认，可选 low/medium/high/xhigh/max）
+	DefaultTokenBudget        int    `json:"defaultTokenBudget"`        // 默认单任务 Token 预算
+	DefaultMaxTurns           int    `json:"defaultMaxTurns"`           // 默认单任务最大轮数
+	DefaultMaxMinutes         int    `json:"defaultMaxMinutes"`         // 默认单任务最大分钟数
 }
 
 // LLMSettingsView 表示脱敏后的模型通道配置视图。
@@ -124,12 +133,14 @@ type UpdateSettingsInput struct {
 		Enabled          bool   `json:"enabled"`
 	} `json:"notify"`
 	Workflow *struct {
-		AutoStartOnNewRequirement bool `json:"autoStartOnNewRequirement"`
-		AutoStartOnConfirmStatus  bool `json:"autoStartOnConfirmStatus"`
-		DefaultPlanConfirm        bool `json:"defaultPlanConfirm"`
-		DefaultTokenBudget        int  `json:"defaultTokenBudget"`
-		DefaultMaxTurns           int  `json:"defaultMaxTurns"`
-		DefaultMaxMinutes         int  `json:"defaultMaxMinutes"`
+		AutoStartOnNewRequirement bool   `json:"autoStartOnNewRequirement"`
+		AutoStartOnConfirmStatus  bool   `json:"autoStartOnConfirmStatus"`
+		DefaultPlanConfirm        bool   `json:"defaultPlanConfirm"`
+		DefaultAgyModel           string `json:"defaultAgyModel"`
+		DefaultAgyEffort          string `json:"defaultAgyEffort"`
+		DefaultTokenBudget        int    `json:"defaultTokenBudget"`
+		DefaultMaxTurns           int    `json:"defaultMaxTurns"`
+		DefaultMaxMinutes         int    `json:"defaultMaxMinutes"`
 	} `json:"workflow"`
 	PublicListenAddr  string    `json:"publicListenAddr"`  // 可选修改的独立外部调用监听地址或端口号（如 0.0.0.0:9443 或 9443）
 	PublicAllowIPs    *[]string `json:"publicAllowIPs"`    // 可选修改的外部调用全局附加 IP/CIDR 白名单
@@ -160,6 +171,8 @@ func (s *Service) GetSettingsView(caFingerprint string) SystemSettingsView {
 			AutoStartOnNewRequirement: s.cfg.Workflow.AutoStartOnNewRequirement,
 			AutoStartOnConfirmStatus:  s.cfg.Workflow.AutoStartOnConfirmStatus,
 			DefaultPlanConfirm:        s.cfg.Workflow.DefaultPlanConfirm,
+			DefaultAgyModel:           s.cfg.Workflow.DefaultAgyModel,
+			DefaultAgyEffort:          s.cfg.Workflow.DefaultAgyEffort,
 			DefaultTokenBudget:        s.cfg.Workflow.DefaultTokenBudget,
 			DefaultMaxTurns:           s.cfg.Workflow.DefaultMaxTurns,
 			DefaultMaxMinutes:         s.cfg.Workflow.DefaultMaxMinutes,
@@ -242,6 +255,8 @@ func (s *Service) UpdateSettings(in UpdateSettingsInput, actor string) error {
 		s.cfg.Workflow.AutoStartOnNewRequirement = in.Workflow.AutoStartOnNewRequirement
 		s.cfg.Workflow.AutoStartOnConfirmStatus = in.Workflow.AutoStartOnConfirmStatus
 		s.cfg.Workflow.DefaultPlanConfirm = in.Workflow.DefaultPlanConfirm
+		s.cfg.Workflow.DefaultAgyModel = strings.TrimSpace(in.Workflow.DefaultAgyModel)
+		s.cfg.Workflow.DefaultAgyEffort = strings.TrimSpace(in.Workflow.DefaultAgyEffort)
 		if in.Workflow.DefaultTokenBudget > 0 {
 			s.cfg.Workflow.DefaultTokenBudget = in.Workflow.DefaultTokenBudget
 		}
@@ -262,6 +277,16 @@ func (s *Service) UpdateSettings(in UpdateSettingsInput, actor string) error {
 			Description: "新增需求是否自动进入研发状态",
 			UpdatedBy:   actor,
 		})
+		_ = s.repo.UpsertSetting(&model.Setting{
+			ProductID:   0,
+			SettingKey:  "workflow_default_agy_model",
+			SettingVal:  s.cfg.Workflow.DefaultAgyModel,
+			Description: "调用 Antigravity (agy) 开发时的默认模型 ID",
+			UpdatedBy:   actor,
+		})
+		if s.engineCfgSyncer != nil {
+			s.engineCfgSyncer(s.cfg.Workflow.DefaultAgyModel, s.cfg.Workflow.DefaultAgyEffort)
+		}
 	}
 
 	_ = s.repo.UpsertSetting(&model.Setting{

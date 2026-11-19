@@ -18,10 +18,12 @@ import (
 	"autoship/pkg/desensitize"
 )
 
-// AgyInvocation 描述单次调用本机 Antigravity CLI (`agy`) 的工作目录、模式与提示词输入参数。
+// AgyInvocation 描述单次调用本机 Antigravity CLI (`agy`) 的工作目录、模式、模型与提示词输入参数。
 type AgyInvocation struct {
 	WorkDir        string            // 子进程执行目录（独立 git worktree 路径）
 	Mode           string            // 执行模式：plan（只读分析/评审）或 auto（编码与自测）
+	Model          string            // 可选覆盖模型名（为空时取 AgentConfig.Engine.AgyModel）
+	Effort         string            // 可选覆盖推理强度（为空时取 AgentConfig.Engine.AgyEffort）
 	Prompt         string            // 自包含任务或评审提示词
 	ConversationID string            // 可选续接指定 Antigravity 会话 ID
 	Timeout        time.Duration     // 本轮调用最大超时时长
@@ -137,7 +139,8 @@ func (e *AgyExecutor) Execute(ctx context.Context, req *TaskRequest) (*TaskOutco
 		}
 		plan = &cp
 	} else {
-		e.emitActivity(req, "evt.work.progress", "正在通过 Antigravity (agy) 分析仓库结构并生成技术方案...", "spec")
+		modelLabel := e.effectiveModelLabel(req)
+		e.emitActivity(req, "evt.work.progress", fmt.Sprintf("正在通过 Antigravity (model=%s) 分析仓库结构并生成技术方案...", modelLabel), "spec")
 		turnsUsed++
 		generated, err := e.generatePlanViaAgy(ctx, req, maxDuration/3)
 		if err != nil {
@@ -185,12 +188,14 @@ func (e *AgyExecutor) Execute(ctx context.Context, req *TaskRequest) (*TaskOutco
 			}, nil
 		}
 
-		e.emitActivity(req, "evt.work.progress", fmt.Sprintf("Antigravity (agy) 正在执行第 %d 轮编码与自测...", round+1), "coding")
+		e.emitActivity(req, "evt.work.progress", fmt.Sprintf("Antigravity (model=%s) 正在执行第 %d 轮编码与自测...", e.effectiveModelLabel(req), round+1), "coding")
 		turnsUsed++
 		codingPrompt := buildAgyCodingPrompt(req, plan, feedbackNotes)
 		runRes, err := e.runner(ctx, AgyInvocation{
 			WorkDir:  req.WorktreeDir,
 			Mode:     "auto",
+			Model:    req.AgyModel,
+			Effort:   req.AgyEffort,
 			Prompt:   codingPrompt,
 			Timeout:  maxDuration / 2,
 			ExtraEnv: req.ExtraEnv,
@@ -385,10 +390,10 @@ func (e *AgyExecutor) defaultRunAgyCLI(ctx context.Context, inv AgyInvocation) (
 	if e.agentCfg.Engine.AgySandbox {
 		args = append(args, "--sandbox")
 	}
-	if m := strings.TrimSpace(e.agentCfg.Engine.AgyModel); m != "" {
+	if m := nonEmptyOrDefault(inv.Model, e.agentCfg.Engine.AgyModel); m != "" {
 		args = append(args, "--model", m)
 	}
-	if ef := strings.TrimSpace(e.agentCfg.Engine.AgyEffort); ef != "" {
+	if ef := nonEmptyOrDefault(inv.Effort, e.agentCfg.Engine.AgyEffort); ef != "" {
 		args = append(args, "--effort", ef)
 	}
 	if cid := strings.TrimSpace(inv.ConversationID); cid != "" {
@@ -443,6 +448,8 @@ func (e *AgyExecutor) generatePlanViaAgy(ctx context.Context, req *TaskRequest, 
 	res, err := e.runner(ctx, AgyInvocation{
 		WorkDir:  req.WorktreeDir,
 		Mode:     "plan",
+		Model:    req.AgyModel,
+		Effort:   req.AgyEffort,
 		Prompt:   prompt,
 		Timeout:  timeout,
 		ExtraEnv: req.ExtraEnv,
@@ -558,6 +565,8 @@ func (e *AgyExecutor) runIndependentAgyReview(ctx context.Context, req *TaskRequ
 	res, err := e.runner(ctx, AgyInvocation{
 		WorkDir:  req.WorktreeDir,
 		Mode:     "plan",
+		Model:    req.AgyModel,
+		Effort:   req.AgyEffort,
 		Prompt:   prompt,
 		Timeout:  10 * time.Minute,
 		ExtraEnv: req.ExtraEnv,
@@ -626,6 +635,8 @@ func (e *AgyExecutor) runPublicZoneAgyAudit(
 	res, err := e.runner(ctx, AgyInvocation{
 		WorkDir:  req.WorktreeDir,
 		Mode:     "plan",
+		Model:    req.AgyModel,
+		Effort:   req.AgyEffort,
 		Prompt:   prompt,
 		Timeout:  10 * time.Minute,
 		ExtraEnv: req.ExtraEnv,
@@ -661,6 +672,17 @@ func (e *AgyExecutor) emitActivity(req *TaskRequest, evtType, msg, stage string)
 	if req != nil && req.OnActivity != nil {
 		req.OnActivity(evtType, msg, map[string]string{"stage": stage, "driver": "agy"})
 	}
+}
+
+// effectiveModelLabel 返回本次任务实际生效的 Antigravity 模型名称标识，用于活动日志展示。
+func (e *AgyExecutor) effectiveModelLabel(req *TaskRequest) string {
+	if req != nil && strings.TrimSpace(req.AgyModel) != "" {
+		return strings.TrimSpace(req.AgyModel)
+	}
+	if strings.TrimSpace(e.agentCfg.Engine.AgyModel) != "" {
+		return strings.TrimSpace(e.agentCfg.Engine.AgyModel)
+	}
+	return "default"
 }
 
 // agyCoderReport 表示 Antigravity 编码轮结束时附带的结构化摘要或提问载荷。

@@ -470,6 +470,21 @@ func (d *Daemon) executeCommandPayload(ctx context.Context, cmd envelope.Message
 			_, _ = d.EmitEvent("evt.preview.stopped", p)
 		}
 
+	case "cmd.engine.config":
+		var p struct {
+			AgyModel  string `json:"agyModel"`
+			AgyEffort string `json:"agyEffort"`
+		}
+		if json.Unmarshal(cmd.Payload, &p) == nil {
+			d.mu.Lock()
+			d.cfg.Engine.AgyModel = strings.TrimSpace(p.AgyModel)
+			d.cfg.Engine.AgyEffort = strings.TrimSpace(p.AgyEffort)
+			if d.cfgFilePath != "" {
+				_ = config.Save(d.cfgFilePath, d.cfg)
+			}
+			d.mu.Unlock()
+		}
+
 	case "cmd.work.start", "cmd.work.resume":
 		d.runDevWorkCommand(ctx, cmd.Payload)
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"autoship/internal/config"
 	agentSvc "autoship/internal/modules/agent/service"
 	llmModel "autoship/internal/modules/llm/model"
 	llmSvc "autoship/internal/modules/llm/service"
@@ -36,6 +37,7 @@ type ReleaseCreator interface {
 // Service 封装开发任务全生命周期编排与开发 Agent 双向消息处理。
 type Service struct {
 	repo       *repository.Repository
+	cfg        *config.ServerConfig
 	products   *prodSvc.Service
 	agents     *agentSvc.Service
 	runs       *runSvc.Service
@@ -72,10 +74,16 @@ func (s *Service) SetBridges(rb RequirementBridge, rc ReleaseCreator) {
 	s.relCreator = rc
 }
 
+// SetConfig 注入服务端全局配置指针，用于读取全局默认的 Antigravity 模型与推理强度。
+// 参数 cfg 为全局配置；无返回值，在 router.Build 阶段调用。
+func (s *Service) SetConfig(cfg *config.ServerConfig) {
+	s.cfg = cfg
+}
+
 // StartWorkForRequirements 实现 requirement.WorkStarter 接口：创建开发任务，组装完整产品档案与需求规格下发开发 Agent。
-// 参数 productID 为产品主键，reqIDs 为关联需求切片，planConfirm 为是否开启方案确认门，tokenBudget/maxTurns/maxMinutes 为预算，actor 为操作人；返回新建任务 ID 与错误。
-func (s *Service) StartWorkForRequirements(productID uint64, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, _ string) (uint64, error) {
-	return s.createAndDispatchWork(productID, 0, "", reqIDs, planConfirm, tokenBudget, maxTurns, maxMinutes)
+// 参数 productID 为产品主键，reqIDs 为关联需求切片，planConfirm 为是否开启方案确认门，tokenBudget/maxTurns/maxMinutes 为预算，agyModel/agyEffort 为可选覆盖模型，actor 为操作人；返回新建任务 ID 与错误。
+func (s *Service) StartWorkForRequirements(productID uint64, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, agyModel, agyEffort, _ string) (uint64, error) {
+	return s.createAndDispatchWork(productID, 0, "", reqIDs, planConfirm, tokenBudget, maxTurns, maxMinutes, agyModel, agyEffort)
 }
 
 // CreateFixWorkForFailedRelease 为推 tag 后发布 CI 失败的版本新建一条关联修复任务（落实用户已确认的发布失败重发策略）。
@@ -85,11 +93,11 @@ func (s *Service) CreateFixWorkForFailedRelease(productID, failedReleaseID uint6
 	if strings.TrimSpace(note) != "" {
 		title += "：" + strings.TrimSpace(note)
 	}
-	return s.createAndDispatchWork(productID, failedReleaseID, title, reqIDs, true, 200000, 60, 60)
+	return s.createAndDispatchWork(productID, failedReleaseID, title, reqIDs, true, 200000, 60, 60, "", "")
 }
 
-// createAndDispatchWork 内部通用创建开发任务并组装产品完整档案投递给开发 Agent；参数为产品ID、父失败版本ID、标题、需求ID列表与预算配置；返回新建开发任务 ID 与错误。
-func (s *Service) createAndDispatchWork(productID, parentReleaseID uint64, overrideTitle string, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int) (uint64, error) {
+// createAndDispatchWork 内部通用创建开发任务并组装产品完整档案投递给开发 Agent；参数为产品ID、父失败版本ID、标题、需求ID列表、预算及模型配置；返回新建开发任务 ID 与错误。
+func (s *Service) createAndDispatchWork(productID, parentReleaseID uint64, overrideTitle string, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, agyModel, agyEffort string) (uint64, error) {
 	bundle, err := s.products.GetFullBundle(productID)
 	if err != nil || bundle == nil {
 		return 0, errors.New("目标产品档案不存在")
@@ -123,6 +131,15 @@ func (s *Service) createAndDispatchWork(productID, parentReleaseID uint64, overr
 		maxMinutes = 60
 	}
 
+	resolvedModel := strings.TrimSpace(agyModel)
+	resolvedEffort := strings.TrimSpace(agyEffort)
+	if resolvedModel == "" && s.cfg != nil {
+		resolvedModel = strings.TrimSpace(s.cfg.Workflow.DefaultAgyModel)
+	}
+	if resolvedEffort == "" && s.cfg != nil {
+		resolvedEffort = strings.TrimSpace(s.cfg.Workflow.DefaultAgyEffort)
+	}
+
 	now := time.Now()
 	item := &model.WorkItem{
 		ProductID:           productID,
@@ -134,6 +151,8 @@ func (s *Service) createAndDispatchWork(productID, parentReleaseID uint64, overr
 		TokenBudget:         tokenBudget,
 		MaxTurns:            maxTurns,
 		MaxDurationMinutes:  maxMinutes,
+		AgyModel:            resolvedModel,
+		AgyEffort:           resolvedEffort,
 		StartedAt:           &now,
 	}
 	if err := s.repo.CreateWithRequirements(item, reqIDs); err != nil {
@@ -148,6 +167,8 @@ func (s *Service) createAndDispatchWork(productID, parentReleaseID uint64, overr
 		"primaryModuleCode":   item.PrimaryModuleCode,
 		"parentReleaseId":     item.ParentReleaseID,
 		"planConfirmRequired": item.PlanConfirmRequired,
+		"agyModel":            item.AgyModel,
+		"agyEffort":           item.AgyEffort,
 		"budget": map[string]any{
 			"tokenBudget":        item.TokenBudget,
 			"maxTurns":           item.MaxTurns,

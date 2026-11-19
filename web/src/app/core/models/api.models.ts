@@ -657,6 +657,8 @@ export interface SystemSettingsView {
     autoStartOnNewRequirement: boolean;
     autoStartOnConfirmStatus: boolean;
     defaultPlanConfirm: boolean;
+    defaultAgyModel?: string;
+    defaultAgyEffort?: string;
     defaultTokenBudget: number;
     defaultMaxTurns: number;
     defaultMaxMinutes: number;
@@ -693,6 +695,8 @@ export interface UpdateSystemSettingsPayload {
     autoStartOnNewRequirement: boolean;
     autoStartOnConfirmStatus: boolean;
     defaultPlanConfirm: boolean;
+    defaultAgyModel?: string;
+    defaultAgyEffort?: string;
     defaultTokenBudget: number;
     defaultMaxTurns: number;
     defaultMaxMinutes: number;

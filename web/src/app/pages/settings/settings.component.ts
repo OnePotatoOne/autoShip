@@ -37,6 +37,8 @@ import {
 } from '../../core/models/api.models';
 import { AdminApiService } from '../../core/services/admin-api.service';
 import {
+  AGY_EFFORT_OPTIONS,
+  AGY_MODEL_OPTIONS,
   copyTextToClipboard,
   formatDateTime,
   parseStringArray
@@ -391,6 +393,49 @@ import {
                       自动触发研发任务时默认开启「方案确认门」（先由 Antigravity 生成方案供确认后再改代码）
                     </label>
                   </nz-form-item>
+
+                  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 12px; padding-top: 8px; border-top: 1px dashed #e2e8f0;">
+                    <nz-form-item style="margin-bottom: 0;">
+                      <nz-form-label>
+                        <span>Antigravity (agy) 默认研发模型</span>
+                        <a style="margin-left: 8px; font-size: 12px; font-weight: 400;" (click)="customAgyModelInput.set(!customAgyModelInput())">
+                          {{ customAgyModelInput() ? '切换为下拉列表选择' : '手动填写自定义模型 ID' }}
+                        </a>
+                      </nz-form-label>
+                      <nz-form-control nzExtra="保存后实时同步给在线 Mac 开发 Agent，后续所有新增开发任务默认调用该模型">
+                        @if (!customAgyModelInput()) {
+                          <nz-select
+                            name="wfAgyModelSel"
+                            nzShowSearch
+                            [(ngModel)]="settingsForm.workflow.defaultAgyModel"
+                          >
+                            @for (opt of agyModelOptions; track opt.value) {
+                              <nz-option [nzValue]="opt.value" [nzLabel]="opt.label"></nz-option>
+                            }
+                          </nz-select>
+                        } @else {
+                          <input
+                            nz-input
+                            class="as-mono"
+                            name="wfAgyModelCustom"
+                            [(ngModel)]="settingsForm.workflow.defaultAgyModel"
+                            placeholder="输入任意 agy 模型 ID（如 claude-opus-5-5-high），留空跟随本机默认"
+                          />
+                        }
+                      </nz-form-control>
+                    </nz-form-item>
+
+                    <nz-form-item style="margin-bottom: 0;">
+                      <nz-form-label>默认推理强度 (--effort)</nz-form-label>
+                      <nz-form-control>
+                        <nz-select name="wfAgyEffort" [(ngModel)]="settingsForm.workflow.defaultAgyEffort">
+                          @for (ef of agyEffortOptions; track ef.value) {
+                            <nz-option [nzValue]="ef.value" [nzLabel]="ef.label"></nz-option>
+                          }
+                        </nz-select>
+                      </nz-form-control>
+                    </nz-form-item>
+                  </div>
 
                   <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
                     <nz-form-item style="margin-bottom: 0;">
@@ -1297,6 +1342,10 @@ export class SettingsComponent implements OnInit {
     serverSignPubB64: ''
   });
 
+  readonly agyModelOptions = AGY_MODEL_OPTIONS;
+  readonly agyEffortOptions = AGY_EFFORT_OPTIONS;
+  readonly customAgyModelInput = signal<boolean>(false);
+
   // 全局设置表单
   settingsForm = {
     llm: {
@@ -1317,6 +1366,8 @@ export class SettingsComponent implements OnInit {
       autoStartOnNewRequirement: false,
       autoStartOnConfirmStatus: true,
       defaultPlanConfirm: true,
+      defaultAgyModel: '',
+      defaultAgyEffort: '',
       defaultTokenBudget: 400000,
       defaultMaxTurns: 60,
       defaultMaxMinutes: 90
@@ -1455,6 +1506,8 @@ export class SettingsComponent implements OnInit {
             autoStartOnNewRequirement: Boolean(s.workflow?.autoStartOnNewRequirement),
             autoStartOnConfirmStatus: s.workflow?.autoStartOnConfirmStatus !== false,
             defaultPlanConfirm: s.workflow?.defaultPlanConfirm !== false,
+            defaultAgyModel: s.workflow?.defaultAgyModel || '',
+            defaultAgyEffort: s.workflow?.defaultAgyEffort || '',
             defaultTokenBudget: s.workflow?.defaultTokenBudget || 400000,
             defaultMaxTurns: s.workflow?.defaultMaxTurns || 60,
             defaultMaxMinutes: s.workflow?.defaultMaxMinutes || 90
@@ -1462,6 +1515,10 @@ export class SettingsComponent implements OnInit {
           artifactKeepCount: s.artifactKeepCount || 5,
           publicListenAddr: s.pki?.publicListenAddr || '0.0.0.0:9443'
         };
+        const savedMod = s.workflow?.defaultAgyModel || '';
+        if (savedMod && !this.agyModelOptions.some((o) => o.value === savedMod)) {
+          this.customAgyModelInput.set(true);
+        }
       },
       error: () => {}
     });

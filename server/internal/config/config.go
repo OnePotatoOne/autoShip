@@ -71,14 +71,16 @@ type NotifyConfig struct {
 	Enabled          bool   `yaml:"enabled"`          // 是否启用飞书推送
 }
 
-// WorkflowConfig 定义新增需求入池与需求状态变更触发自动研发的全局流转策略。
+// WorkflowConfig 定义新增需求入池、需求状态变更触发自动研发及默认 Antigravity 模型配置策略。
 type WorkflowConfig struct {
-	AutoStartOnNewRequirement bool `yaml:"autoStartOnNewRequirement"` // 新增需求（外部提交或后台录入）是否自动进入研发状态并下发开发任务（默认 false：先由管理员确认改状态后再开发）
-	AutoStartOnConfirmStatus  bool `yaml:"autoStartOnConfirmStatus"`  // 管理员确认要做并将状态改为 scheduled 或 in_progress 时是否自动启动开发任务（默认 true）
-	DefaultPlanConfirm        bool `yaml:"defaultPlanConfirm"`        // 自动触发研发任务时是否默认开启“方案确认门”（默认 true）
-	DefaultTokenBudget        int  `yaml:"defaultTokenBudget"`        // 自动触发研发任务时的默认 Token 预算上限（默认 400000）
-	DefaultMaxTurns           int  `yaml:"defaultMaxTurns"`           // 自动触发研发任务时的默认最大交互轮数（默认 60）
-	DefaultMaxMinutes         int  `yaml:"defaultMaxMinutes"`         // 自动触发研发任务时的默认最大执行分钟数（默认 90）
+	AutoStartOnNewRequirement bool   `yaml:"autoStartOnNewRequirement"` // 新增需求（外部提交或后台录入）是否自动进入研发状态并下发开发任务（默认 false：先由管理员确认改状态后再开发）
+	AutoStartOnConfirmStatus  bool   `yaml:"autoStartOnConfirmStatus"`  // 管理员确认要做并将状态改为 scheduled 或 in_progress 时是否自动启动开发任务（默认 true）
+	DefaultPlanConfirm        bool   `yaml:"defaultPlanConfirm"`        // 自动触发研发任务时是否默认开启“方案确认门”（默认 true）
+	DefaultAgyModel           string `yaml:"defaultAgyModel"`           // 调用本机 Antigravity (agy) 执行研发时的全局默认模型 ID（留空表示使用本机 agy 默认模型）
+	DefaultAgyEffort          string `yaml:"defaultAgyEffort"`          // 调用本机 Antigravity (agy) 执行研发时的全局默认推理强度（留空默认，可选 low/medium/high/xhigh/max）
+	DefaultTokenBudget        int    `yaml:"defaultTokenBudget"`        // 自动触发研发任务时的默认 Token 预算上限（默认 400000）
+	DefaultMaxTurns           int    `yaml:"defaultMaxTurns"`           // 自动触发研发任务时的默认最大交互轮数（默认 60）
+	DefaultMaxMinutes         int    `yaml:"defaultMaxMinutes"`         // 自动触发研发任务时的默认最大执行分钟数（默认 90）
 }
 
 // Default 返回带安全默认值的 ServerConfig 实例。

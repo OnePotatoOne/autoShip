@@ -45,6 +45,8 @@ workflow:
   autoStartOnNewRequirement: false
   autoStartOnConfirmStatus: true
   defaultPlanConfirm: true
+  defaultAgyModel: ""
+  defaultAgyEffort: ""
   defaultTokenBudget: 400000
   defaultMaxTurns: 60
   defaultMaxMinutes: 90

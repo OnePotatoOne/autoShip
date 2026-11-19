@@ -162,10 +162,12 @@ type TaskRequest struct {
 	TaskConstraints         []string              `json:"taskConstraints"`         // 任务级附加约束
 	RequirePlanConfirmation bool                  `json:"requirePlanConfirmation"` // 是否开启方案确认门（8.5 节默认 true）
 	PlanConfirmed           bool                  `json:"planConfirmed"`           // 人工是否已确认技术方案
-	ApprovedPlan            *PlanSpec             `json:"approvedPlan,omitempty"`  // 恢复执行时传入已确认的规格方案
-	OwnerReplies            []string              `json:"ownerReplies,omitempty"`  // ask_owner 或打回验收后人工回复的指导意见
+	ApprovedPlan            *PlanSpec             `json:"approvedPlan,omitempty"`   // 恢复执行时传入已确认的规格方案
+	OwnerReplies            []string              `json:"ownerReplies,omitempty"`   // ask_owner 或打回验收后人工回复的指导意见
 	BudgetOverride          *config.TaskBudget    `json:"budgetOverride,omitempty"` // 可选覆盖的单任务预算
-	ExtraEnv                map[string]string     `json:"extraEnv,omitempty"`      // 注入测试/构建子进程的环境变量（如测试库 DSN、依赖缓存目录）
+	AgyModel                string                `json:"agyModel,omitempty"`       // 可选覆盖本次调用 Antigravity (agy) 使用的模型 ID
+	AgyEffort               string                `json:"agyEffort,omitempty"`      // 可选覆盖本次调用 Antigravity (agy) 使用的推理强度
+	ExtraEnv                map[string]string     `json:"extraEnv,omitempty"`       // 注入测试/构建子进程的环境变量（如测试库 DSN、依赖缓存目录）
 	MaxValidationLoops      int                   `json:"maxValidationLoops"`      // 校验/评审打回编码会话的最大修复轮数（默认 3）
 	OnActivity              func(eventType, message string, meta any) // 实时向 Server / 飞书同步活动流与拦截事件的回调
 	OnSandboxIntercept      func(evt *sandbox.InterceptEvent)         // 权限档案拦截专用回调

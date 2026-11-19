@@ -163,10 +163,12 @@ func (h *Handler) Close(c *gin.Context) {
 func (h *Handler) StartWork(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	var req struct {
-		PlanConfirmRequired *bool `json:"planConfirmRequired"`
-		TokenBudget         int   `json:"tokenBudget"`
-		MaxTurns            int   `json:"maxTurns"`
-		MaxDurationMinutes  int   `json:"maxDurationMinutes"`
+		PlanConfirmRequired *bool  `json:"planConfirmRequired"`
+		TokenBudget         int    `json:"tokenBudget"`
+		MaxTurns            int    `json:"maxTurns"`
+		MaxDurationMinutes  int    `json:"maxDurationMinutes"`
+		AgyModel            string `json:"agyModel"`
+		AgyEffort           string `json:"agyEffort"`
 	}
 	_ = c.ShouldBindJSON(&req)
 	planConfirm := true
@@ -174,7 +176,7 @@ func (h *Handler) StartWork(c *gin.Context) {
 		planConfirm = *req.PlanConfirmRequired
 	}
 	actor := c.GetString("autoship.admin_username")
-	workID, err := h.svc.StartWork(id, planConfirm, req.TokenBudget, req.MaxTurns, req.MaxDurationMinutes, actor)
+	workID, err := h.svc.StartWork(id, planConfirm, req.TokenBudget, req.MaxTurns, req.MaxDurationMinutes, req.AgyModel, req.AgyEffort, actor)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return

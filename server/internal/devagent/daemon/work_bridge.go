@@ -19,6 +19,8 @@ type serverStartWorkPayload struct {
 	PrimaryModuleCode   string `json:"primaryModuleCode"`
 	ParentReleaseID     uint64 `json:"parentReleaseId"`
 	PlanConfirmRequired *bool  `json:"planConfirmRequired"`
+	AgyModel            string `json:"agyModel"`
+	AgyEffort           string `json:"agyEffort"`
 	Budget              struct {
 		TokenBudget        int `json:"tokenBudget"`
 		MaxTurns           int `json:"maxTurns"`
@@ -224,6 +226,8 @@ func (d *Daemon) decodeInboundWorkRequest(rawPayload json.RawMessage) (engine.Ta
 		EnvironmentJSON:         envJSON,
 		InitialCriteria:         criteria,
 		RequirePlanConfirmation: planConfirm,
+		AgyModel:                strings.TrimSpace(srv.AgyModel),
+		AgyEffort:               strings.TrimSpace(srv.AgyEffort),
 		BudgetOverride: &config.TaskBudget{
 			MaxTokens:          srv.Budget.TokenBudget,
 			MaxTurns:           srv.Budget.MaxTurns,

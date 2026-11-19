@@ -32,6 +32,8 @@ import {
 } from '../../core/models/api.models';
 import { AdminApiService } from '../../core/services/admin-api.service';
 import {
+  AGY_EFFORT_OPTIONS,
+  AGY_MODEL_OPTIONS,
   formatDateTime,
   getDeploymentStatusMeta,
   getIssueTypeMeta,
@@ -490,10 +492,32 @@ import {
                   该需求已有关联开发任务，本次仅修改需求状态字段。
                 </div>
               } @else if (statusForm.triggerStartWork) {
-                <div style="margin-top: 8px;">
+                <div style="margin-top: 8px; margin-bottom: 10px;">
                   <label nz-checkbox name="stPlanConfirm" [(ngModel)]="statusForm.planConfirmRequired">
                     启用「方案确认门」（先生成技术方案供我确认，再修改代码）
                   </label>
+                </div>
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                  <nz-form-item style="margin-bottom: 0;">
+                    <nz-form-label>本次调用 Antigravity 模型（默认继承系统设置）</nz-form-label>
+                    <nz-form-control>
+                      <nz-select name="stAgyModel" nzShowSearch [(ngModel)]="statusForm.agyModel">
+                        @for (m of agyModelOptions; track m.value) {
+                          <nz-option [nzValue]="m.value" [nzLabel]="m.label"></nz-option>
+                        }
+                      </nz-select>
+                    </nz-form-control>
+                  </nz-form-item>
+                  <nz-form-item style="margin-bottom: 0;">
+                    <nz-form-label>推理强度</nz-form-label>
+                    <nz-form-control>
+                      <nz-select name="stAgyEffort" [(ngModel)]="statusForm.agyEffort">
+                        @for (ef of agyEffortOptions; track ef.value) {
+                          <nz-option [nzValue]="ef.value" [nzLabel]="ef.label"></nz-option>
+                        }
+                      </nz-select>
+                    </nz-form-control>
+                  </nz-form-item>
                 </div>
               }
             </div>
@@ -632,6 +656,30 @@ import {
               <b>启用“方案确认门”（推荐默认开启）</b>：先产出拟改动模块、公共文件与表结构变更方案，经我确认后再进入编码会话
             </label>
           </nz-form-item>
+
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px;">
+            <nz-form-item>
+              <nz-form-label>Antigravity (agy) 研发模型</nz-form-label>
+              <nz-form-control>
+                <nz-select name="swAgyModel" nzShowSearch [(ngModel)]="startWorkForm.agyModel">
+                  @for (m of agyModelOptions; track m.value) {
+                    <nz-option [nzValue]="m.value" [nzLabel]="m.label"></nz-option>
+                  }
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+
+            <nz-form-item>
+              <nz-form-label>推理强度 (--effort)</nz-form-label>
+              <nz-form-control>
+                <nz-select name="swAgyEffort" [(ngModel)]="startWorkForm.agyEffort">
+                  @for (ef of agyEffortOptions; track ef.value) {
+                    <nz-option [nzValue]="ef.value" [nzLabel]="ef.label"></nz-option>
+                  }
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+          </div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
             <nz-form-item>
@@ -1173,6 +1221,10 @@ export class RequirementsComponent implements OnInit {
   readonly autoStartNewEnabled = signal<boolean>(false);
   readonly autoStartOnConfirmEnabled = signal<boolean>(true);
   readonly defaultPlanConfirmEnabled = signal<boolean>(true);
+  readonly defaultAgyModel = signal<string>('');
+  readonly defaultAgyEffort = signal<string>('');
+  readonly agyModelOptions = AGY_MODEL_OPTIONS;
+  readonly agyEffortOptions = AGY_EFFORT_OPTIONS;
 
   // 原型沙箱选择状态
   readonly selectedPrototypeIdx = signal<number>(0);
@@ -1218,6 +1270,8 @@ export class RequirementsComponent implements OnInit {
     status: 'in_progress',
     triggerStartWork: true,
     planConfirmRequired: true,
+    agyModel: '',
+    agyEffort: '',
     closeReason: 'deferred',
     note: ''
   };
@@ -1235,7 +1289,9 @@ export class RequirementsComponent implements OnInit {
     planConfirmRequired: true,
     tokenBudget: 400000,
     maxTurns: 60,
-    maxDurationMinutes: 90
+    maxDurationMinutes: 90,
+    agyModel: '',
+    agyEffort: ''
   };
 
   linkForm = {
@@ -1271,6 +1327,8 @@ export class RequirementsComponent implements OnInit {
           this.autoStartNewEnabled.set(Boolean(s.workflow.autoStartOnNewRequirement));
           this.autoStartOnConfirmEnabled.set(s.workflow.autoStartOnConfirmStatus !== false);
           this.defaultPlanConfirmEnabled.set(s.workflow.defaultPlanConfirm !== false);
+          this.defaultAgyModel.set(s.workflow.defaultAgyModel || '');
+          this.defaultAgyEffort.set(s.workflow.defaultAgyEffort || '');
         }
       },
       error: () => {}
@@ -1601,6 +1659,8 @@ export class RequirementsComponent implements OnInit {
       status: curStatus,
       triggerStartWork: !hasWork && curStatus === 'in_progress',
       planConfirmRequired: prod ? prod.planConfirmDefault : this.defaultPlanConfirmEnabled(),
+      agyModel: this.defaultAgyModel(),
+      agyEffort: this.defaultAgyEffort(),
       closeReason: (item.closeReason as any) || 'deferred',
       note: ''
     };
@@ -1622,6 +1682,8 @@ export class RequirementsComponent implements OnInit {
       status: shouldAutoDev ? 'in_progress' : 'scheduled',
       triggerStartWork: shouldAutoDev,
       planConfirmRequired: prod ? prod.planConfirmDefault : this.defaultPlanConfirmEnabled(),
+      agyModel: this.defaultAgyModel(),
+      agyEffort: this.defaultAgyEffort(),
       closeReason: 'deferred',
       note: '人工已确认要做'
     };
@@ -1658,6 +1720,8 @@ export class RequirementsComponent implements OnInit {
         status: this.statusForm.status,
         triggerStartWork: this.statusTargetAlreadyHasWork() ? false : this.statusForm.triggerStartWork,
         planConfirmRequired: this.statusForm.planConfirmRequired,
+        agyModel: this.statusForm.agyModel,
+        agyEffort: this.statusForm.agyEffort,
         closeReason: this.statusForm.closeReason,
         note: this.statusForm.note
       })
@@ -1735,7 +1799,9 @@ export class RequirementsComponent implements OnInit {
       planConfirmRequired: prod ? prod.planConfirmDefault : true,
       tokenBudget: 400000,
       maxTurns: 60,
-      maxDurationMinutes: 90
+      maxDurationMinutes: 90,
+      agyModel: this.defaultAgyModel(),
+      agyEffort: this.defaultAgyEffort()
     };
     this.startWorkModalVisible.set(true);
   }

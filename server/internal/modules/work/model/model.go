@@ -41,6 +41,8 @@ type WorkItem struct {
 	TokenBudget                  int        `gorm:"not null;default:200000;comment:本任务Token预算上限" json:"tokenBudget"`
 	MaxTurns                     int        `gorm:"not null;default:60;comment:最大对话轮数上限" json:"maxTurns"`
 	MaxDurationMinutes           int        `gorm:"not null;default:60;comment:最大执行时长分钟数上限" json:"maxDurationMinutes"`
+	AgyModel                     string     `gorm:"size:96;not null;default:'';comment:本任务调用Antigravity编码使用的模型ID（为空使用默认）" json:"agyModel"`
+	AgyEffort                    string     `gorm:"size:32;not null;default:'';comment:本任务调用Antigravity编码使用的推理强度（为空使用默认）" json:"agyEffort"`
 	PromptTokensUsed             int        `gorm:"not null;default:0;comment:累计已消耗输入Token数" json:"promptTokensUsed"`
 	CompletionTokensUsed         int        `gorm:"not null;default:0;comment:累计已消耗输出Token数" json:"completionTokensUsed"`
 	DurationSeconds              int64      `gorm:"not null;default:0;comment:累计实际运行耗时秒数" json:"durationSeconds"`

@@ -192,6 +192,8 @@ export class AdminApiService {
       status: string;
       triggerStartWork?: boolean;
       planConfirmRequired?: boolean;
+      agyModel?: string;
+      agyEffort?: string;
       closeReason?: string;
       note?: string;
     }
@@ -247,6 +249,8 @@ export class AdminApiService {
       tokenBudget: number;
       maxTurns: number;
       maxDurationMinutes: number;
+      agyModel?: string;
+      agyEffort?: string;
     }
   ): Observable<Record<string, any>> {
     return this.unwrap(

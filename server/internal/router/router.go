@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -119,7 +120,15 @@ func Build(cfg *config.ServerConfig, cfgPath string, encKey []byte, ca *pki.Bund
 
 	wkR := workRepo.New(dbProvider)
 	wkS := workSvc.New(wkR, prS, agS, rnS, llS, notifier)
+	wkS.SetConfig(cfg)
 	wkH := workHandler.New(wkS)
+
+	audS.SetEngineConfigSyncer(func(agyModel, agyEffort string) {
+		_, _, _ = agS.DispatchToDevAgent("cmd.engine.config", map[string]string{
+			"agyModel":  agyModel,
+			"agyEffort": agyEffort,
+		}, 24*time.Hour)
+	})
 
 	arS := artSvc.New(cfg)
 	rlR := relRepo.New(dbProvider)

@@ -368,3 +368,49 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Antigravity CLI (`agy`) 预设可选模型列表（对齐 `agy models` 完整列表，空值表示跟随本机默认模型）。
+ */
+export const AGY_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '跟随本机 agy CLI 默认模型（当前默认：gemini-4-neon-high）' },
+  { value: 'gemini-4-neon-high', label: 'Gemini 4 Neon (High) — gemini-4-neon-high' },
+  { value: 'gemini-4-neon-xhigh', label: 'Gemini 4 Neon (XHigh) — gemini-4-neon-xhigh' },
+  { value: 'gemini-4-neon-medium', label: 'Gemini 4 Neon (Medium) — gemini-4-neon-medium' },
+  { value: 'gemini-4-neon-low', label: 'Gemini 4 Neon (Low) — gemini-4-neon-low' },
+  { value: 'gemini-4-carbon-high', label: 'Gemini 4 Carbon (High) — gemini-4-carbon-high' },
+  { value: 'gemini-4-carbon-medium', label: 'Gemini 4 Carbon (Medium) — gemini-4-carbon-medium' },
+  { value: 'gemini-4-carbon-low', label: 'Gemini 4 Carbon (Low) — gemini-4-carbon-low' },
+  { value: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High) — gemini-4-argon-high' },
+  { value: 'gemini-4-argon-medium', label: 'Gemini 4 Argon (Medium) — gemini-4-argon-medium' },
+  { value: 'gemini-4-argon-low', label: 'Gemini 4 Argon (Low) — gemini-4-argon-low' },
+  { value: 'gemini-4-hydrogen-xhigh', label: 'Gemini 4 Hydrogen (XHigh) — gemini-4-hydrogen-xhigh' },
+  { value: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen (High) — gemini-4-hydrogen-high' },
+  { value: 'gemini-4-hydrogen-medium', label: 'Gemini 4 Hydrogen (Medium) — gemini-4-hydrogen-medium' },
+  { value: 'gemini-4-hydrogen-low', label: 'Gemini 4 Hydrogen (Low) — gemini-4-hydrogen-low' },
+  { value: 'claude-opus-5-5-high', label: 'Claude Opus 5.5 (High) — claude-opus-5-5-high' },
+  { value: 'claude-opus-5-5-medium', label: 'Claude Opus 5.5 (Medium) — claude-opus-5-5-medium' },
+  { value: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 (Low) — claude-opus-5-5-low' },
+  { value: 'claude-sonnet-5-5-high', label: 'Claude Sonnet 5.5 (High) — claude-sonnet-5-5-high' },
+  { value: 'claude-sonnet-5-5-medium', label: 'Claude Sonnet 5.5 (Medium) — claude-sonnet-5-5-medium' },
+  { value: 'claude-sonnet-5-5-low', label: 'Claude Sonnet 5.5 (Low) — claude-sonnet-5-5-low' },
+  { value: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon) — gemini-pro-orchestrator-neon' },
+  { value: 'gemini-pro-orchestrator', label: 'Orchestrator (Carbon) — gemini-pro-orchestrator' },
+  { value: 'gemini-pro-orchestrator-argon', label: 'Orchestrator (Argon) — gemini-pro-orchestrator-argon' },
+  { value: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High) — gemini-3.8-flash-high' },
+  { value: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium) — gemini-3.8-flash-medium' },
+  { value: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low) — gemini-3.8-flash-low' },
+  { value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium) — gpt-oss-120b-medium' }
+];
+
+/**
+ * Antigravity CLI (`agy`) 推理强度（`--effort`）可选项。
+ */
+export const AGY_EFFORT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '默认（跟随所选模型档位）' },
+  { value: 'low', label: 'low（快速）' },
+  { value: 'medium', label: 'medium（标准）' },
+  { value: 'high', label: 'high（深度推理）' },
+  { value: 'xhigh', label: 'xhigh（超深度推理）' },
+  { value: 'max', label: 'max（最高强度）' }
+];

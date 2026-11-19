@@ -21,7 +21,7 @@ import (
 // WorkStarter 解耦“点开工”时调用 work 模块创建开发任务的接口，避免模块循环依赖。
 type WorkStarter interface {
 	// StartWorkForRequirements 为选定需求创建开发任务并向开发 Agent 下发 cmd.work.start 指令。
-	StartWorkForRequirements(productID uint64, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, actor string) (uint64, error)
+	StartWorkForRequirements(productID uint64, reqIDs []uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, agyModel, agyEffort, actor string) (uint64, error)
 	// GetLinkedObjectStatuses 查询某开发任务当前的任务状态、关联版本状态与最新部署状态（供进行中需求展示三段当前状态）。
 	GetLinkedObjectStatuses(workItemID uint64) (workStatus, releaseStatus, deployStatus string)
 }
@@ -445,6 +445,8 @@ type UpdateStatusInput struct {
 	Status              string `json:"status"`              // 目标状态：clarifying/pending_ai/submitted/triaged/scheduled/in_progress/released/closed
 	TriggerStartWork    *bool  `json:"triggerStartWork"`    // 是否在改状态的同时立即启动开发任务（nil 时按目标状态与全局配置自动判断）
 	PlanConfirmRequired *bool  `json:"planConfirmRequired"` // 触发开发时是否开启方案确认门（nil 时取产品/全局默认）
+	AgyModel            string `json:"agyModel"`            // 触发开发时可选指定的 Antigravity 模型（留空取全局默认）
+	AgyEffort           string `json:"agyEffort"`           // 触发开发时可选指定的推理强度（留空取全局默认）
 	CloseReason         string `json:"closeReason"`         // 目标状态为 closed 时的关闭原因（默认 deferred）
 	Note                string `json:"note"`                // 状态修改说明备注
 }
@@ -524,7 +526,7 @@ func (s *Service) UpdateStatus(id uint64, in UpdateStatusInput, actor string) (*
 
 	var createdWorkID uint64
 	if shouldStart && req.ActiveWorkItemID == 0 && targetStatus != "closed" && targetStatus != "released" {
-		workID, startErr := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, actor)
+		workID, startErr := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, in.AgyModel, in.AgyEffort, actor)
 		if startErr != nil {
 			return nil, 0, startErr
 		}
@@ -592,8 +594,8 @@ func (s *Service) Close(id uint64, reason, note, actor string) (*model.Requireme
 }
 
 // StartWork 在后台对需求点“开工”：校验状态后创建开发任务，并将需求状态流转为 in_progress（进行中）。
-// 参数 id 为需求主键，planConfirm 为是否需要方案确认门，tokenBudget/maxTurns/maxMinutes 为预算，actor 为管理员；返回新建开发任务 ID 与错误。
-func (s *Service) StartWork(id uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, actor string) (uint64, error) {
+// 参数 id 为需求主键，planConfirm 为是否需要方案确认门，tokenBudget/maxTurns/maxMinutes 为预算，agyModel/agyEffort 为可选指定模型，actor 为管理员；返回新建开发任务 ID 与错误。
+func (s *Service) StartWork(id uint64, planConfirm bool, tokenBudget, maxTurns, maxMinutes int, agyModel, agyEffort, actor string) (uint64, error) {
 	if s.workStarter == nil {
 		return 0, errors.New("开发任务模块尚未就绪")
 	}
@@ -604,7 +606,7 @@ func (s *Service) StartWork(id uint64, planConfirm bool, tokenBudget, maxTurns, 
 	if req.Archived || req.Status == "closed" || req.Status == "released" {
 		return 0, errors.New("当前需求已关闭或已上线，不能重复开工")
 	}
-	workItemID, err := s.workStarter.StartWorkForRequirements(req.ProductID, []uint64{req.ID}, planConfirm, tokenBudget, maxTurns, maxMinutes, actor)
+	workItemID, err := s.workStarter.StartWorkForRequirements(req.ProductID, []uint64{req.ID}, planConfirm, tokenBudget, maxTurns, maxMinutes, agyModel, agyEffort, actor)
 	if err != nil {
 		return 0, err
 	}
@@ -754,7 +756,7 @@ func (s *Service) tryAutoStartWork(req *model.Requirement, prodPlanConfirm bool,
 		return
 	}
 	_, _, planConfirm, tokBudget, maxTurns, maxMins := s.workflowSettings(prodPlanConfirm)
-	workID, err := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, actor)
+	workID, err := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, "", "", actor)
 	if err != nil {
 		_ = s.repo.AppendEvent(&model.RequirementEvent{
 			ProductID:     req.ProductID,
