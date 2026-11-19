@@ -664,6 +664,7 @@ export interface SystemSettingsView {
   pki: {
     caFingerprint: string;
     publicListenAddr: string;
+    publicAllowIPs?: string[];
     tailnetListenAddr: string;
     serverSignPubB64: string;
   };
@@ -696,6 +697,8 @@ export interface UpdateSystemSettingsPayload {
     defaultMaxTurns: number;
     defaultMaxMinutes: number;
   };
+  publicListenAddr?: string;
+  publicAllowIPs?: string[];
   artifactKeepCount: number;
 }
 

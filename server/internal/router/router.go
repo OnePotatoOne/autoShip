@@ -65,9 +65,10 @@ import (
 
 // AppBundle 保存装配完毕的双 HTTP 路由引擎与后台任务服务句柄。
 type AppBundle struct {
-	TailnetEngine *gin.Engine     // 只监听 tailnet 地址的管理后台与开发 Agent 引擎
-	PublicEngine  *gin.Engine     // 监听公网端口并带严格 IP 白名单的 Open API 与更新 Agent 引擎
-	LLMService    *llmSvc.Service // 用于启动后台探活循环的模型服务
+	TailnetEngine *gin.Engine       // 只监听 tailnet 地址的管理后台与开发 Agent 引擎
+	PublicEngine  *gin.Engine       // 监听独立外部端口并带严格 IP 白名单的 Open API 与更新 Agent 引擎
+	LLMService    *llmSvc.Service   // 用于启动后台探活循环的模型服务
+	AuditService  *auditSvc.Service // 审计与全局配置服务（供启动入口注册外部端口热切换器）
 }
 
 // Build 实例化全部仓储、业务服务与控制器，完成跨模块桥接，并返回双监听器 Gin 引擎。
@@ -196,6 +197,7 @@ func Build(cfg *config.ServerConfig, cfgPath string, encKey []byte, ca *pki.Bund
 		TailnetEngine: tailnet,
 		PublicEngine:  public,
 		LLMService:    llS,
+		AuditService:  audS,
 	}
 }
 

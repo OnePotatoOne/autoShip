@@ -3,6 +3,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"autoship/internal/config"
@@ -14,10 +15,11 @@ import (
 
 // Service 封装审计日志记录与全局系统设置读写逻辑。
 type Service struct {
-	repo       *repository.Repository
-	cfg        *config.ServerConfig
-	cfgPath    string
-	encKey     []byte
+	repo           *repository.Repository
+	cfg            *config.ServerConfig
+	cfgPath        string
+	encKey         []byte
+	publicRebinder func(newAddr string) error
 }
 
 // New 创建审计与系统设置业务服务实例。
@@ -29,6 +31,12 @@ func New(repo *repository.Repository, cfg *config.ServerConfig, cfgPath string, 
 		cfgPath: cfgPath,
 		encKey:  encKey,
 	}
+}
+
+// SetPublicListenerRebinder 注入外部调用独立端口的运行时热切换回调，使后台修改外部端口后无需手工重启即可立即生效。
+// 参数 fn 为接收新 host:port 并在进程内重绑 HTTPS 监听器的回调函数；无返回值，在 main 启动入口注入。
+func (s *Service) SetPublicListenerRebinder(fn func(newAddr string) error) {
+	s.publicRebinder = fn
 }
 
 // Record 对详情对象执行脱敏序列化并写入审计表。
@@ -90,12 +98,13 @@ type NotifySettingsView struct {
 	Enabled          bool   `json:"enabled"`          // 是否启用推送
 }
 
-// PKISettingsView 表示只读展示的自建根 CA 指纹与监听信息。
+// PKISettingsView 表示自建根 CA 指纹以及管理后台端口与独立外部调用端口配置视图。
 type PKISettingsView struct {
-	CAFingerprint     string `json:"caFingerprint"`     // 根 CA SHA-256 指纹
-	PublicListenAddr  string `json:"publicListenAddr"`  // 公网监听端口
-	TailnetListenAddr string `json:"tailnetListenAddr"` // Tailnet 后台监听地址
-	ServerSignPubB64  string `json:"serverSignPubB64"`  // Server 动作票据验签公钥
+	CAFingerprint     string   `json:"caFingerprint"`     // 根 CA SHA-256 指纹
+	PublicListenAddr  string   `json:"publicListenAddr"`  // 独立外部调用监听地址与端口（如 0.0.0.0:9443）
+	PublicAllowIPs    []string `json:"publicAllowIPs"`    // 外部调用端口全局额外放行 IP/CIDR 列表
+	TailnetListenAddr string   `json:"tailnetListenAddr"` // Tailnet 管理后台监听地址（与外部端口物理隔离）
+	ServerSignPubB64  string   `json:"serverSignPubB64"`  // Server 动作票据验签公钥
 }
 
 // UpdateSettingsInput 定义后台修改全局设置时的请求载荷。
@@ -122,12 +131,16 @@ type UpdateSettingsInput struct {
 		DefaultMaxTurns           int  `json:"defaultMaxTurns"`
 		DefaultMaxMinutes         int  `json:"defaultMaxMinutes"`
 	} `json:"workflow"`
-	ArtifactKeepCount int `json:"artifactKeepCount"`
+	PublicListenAddr  string    `json:"publicListenAddr"`  // 可选修改的独立外部调用监听地址或端口号（如 0.0.0.0:9443 或 9443）
+	PublicAllowIPs    *[]string `json:"publicAllowIPs"`    // 可选修改的外部调用全局附加 IP/CIDR 白名单
+	ArtifactKeepCount int       `json:"artifactKeepCount"`
 }
 
 // GetSettingsView 组装当前平台全局设置的脱敏视图。
 // 参数 caFingerprint 为启动加载的根 CA 指纹；返回 SystemSettingsView。
 func (s *Service) GetSettingsView(caFingerprint string) SystemSettingsView {
+	allowIPs := make([]string, 0, len(s.cfg.PublicAllowIPs))
+	allowIPs = append(allowIPs, s.cfg.PublicAllowIPs...)
 	return SystemSettingsView{
 		LLM: LLMSettingsView{
 			Mode:              s.cfg.LLM.Mode,
@@ -154,6 +167,7 @@ func (s *Service) GetSettingsView(caFingerprint string) SystemSettingsView {
 		PKI: PKISettingsView{
 			CAFingerprint:     caFingerprint,
 			PublicListenAddr:  s.cfg.PublicListenAddr,
+			PublicAllowIPs:    allowIPs,
 			TailnetListenAddr: s.cfg.TailnetListenAddr,
 			ServerSignPubB64:  s.cfg.ServerSignPubB64,
 		},
@@ -161,9 +175,40 @@ func (s *Service) GetSettingsView(caFingerprint string) SystemSettingsView {
 	}
 }
 
-// UpdateSettings 更新内存配置、写入 settings 表并同步回写 YAML 配置文件。
-// 参数 in 为修改内容，actor 为管理员账号；成功返回 nil，失败返回错误。
+// UpdateSettings 更新内存配置（若修改了外部调用端口则先校验端口隔离并热切换监听器）、写入 settings 表并同步回写 YAML 配置文件。
+// 参数 in 为修改内容，actor 为管理员账号；成功返回 nil，端口冲突或绑定失败时返回具体错误。
 func (s *Service) UpdateSettings(in UpdateSettingsInput, actor string) error {
+	if strings.TrimSpace(in.PublicListenAddr) != "" {
+		normalizedAddr, err := config.NormalizeAndValidatePublicListenAddr(in.PublicListenAddr, s.cfg.TailnetListenAddr)
+		if err != nil {
+			return err
+		}
+		if normalizedAddr != s.cfg.PublicListenAddr {
+			if s.publicRebinder != nil {
+				if err := s.publicRebinder(normalizedAddr); err != nil {
+					return err
+				}
+			}
+			s.cfg.PublicListenAddr = normalizedAddr
+			_ = s.repo.UpsertSetting(&model.Setting{
+				ProductID:   0,
+				SettingKey:  "public_listen_addr",
+				SettingVal:  normalizedAddr,
+				Description: "独立外部调用监听地址与端口",
+				UpdatedBy:   actor,
+			})
+		}
+	}
+	if in.PublicAllowIPs != nil {
+		cleaned := make([]string, 0, len(*in.PublicAllowIPs))
+		for _, ip := range *in.PublicAllowIPs {
+			if t := strings.TrimSpace(ip); t != "" {
+				cleaned = append(cleaned, t)
+			}
+		}
+		s.cfg.PublicAllowIPs = cleaned
+	}
+
 	if in.LLM.Mode == "relay" || in.LLM.Mode == "direct" {
 		s.cfg.LLM.Mode = in.LLM.Mode
 	}

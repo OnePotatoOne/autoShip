@@ -167,13 +167,43 @@ import {
 
         <!-- ==================== Tab 2：Open API 接入方管理 ==================== -->
         <nz-tab [nzTitle]="'Open API 接入方 (' + integrations().length + ')'">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-            <span style="color: #64748b; font-size: 13px;">
-              外部业务系统后端通过独立 AppID + HMAC-SHA256 签名 + 固定来源 IP 白名单调用 /open/v1/*
-            </span>
-            <button nz-button nzType="primary" (click)="openIntegrationModal()">
-              <span nz-icon nzType="plus"></span>新建接入方
-            </button>
+          <!-- 独立外部调用端口与对接文档工具栏 -->
+          <div class="as-subtle-box" style="margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-weight: 600; color: #0f172a;">独立外部接口监听地址：</span>
+                <nz-tag nzColor="green" class="as-mono" style="font-size: 13px;">
+                  https://{{ pkiInfo().publicListenAddr || '0.0.0.0:9443' }}/open/v1/*
+                </nz-tag>
+                <span style="font-size: 12px; color: #64748b;">
+                  （与当前管理页面端口 <code class="as-mono">{{ pkiInfo().tailnetListenAddr }}</code> 物理隔离）
+                </span>
+              </div>
+              <div style="font-size: 12.5px; color: #64748b; margin-top: 4px;">
+                外部业务系统后端通过独立 AppID + HMAC-SHA256 签名 + 固定来源 IP 白名单访问外部端口提交需求或同步进度
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button nz-button nzType="default" (click)="openExternalPortModal()">
+                <span nz-icon nzType="api"></span>修改外部调用端口
+              </button>
+              <button nz-button nzType="default" (click)="openApiDocDrawer()">
+                <span nz-icon nzType="read"></span>在线查看对接文档
+              </button>
+              <a
+                nz-button
+                nzType="default"
+                href="/api/v1/admin/integrations/open-api-doc?download=1"
+                target="_blank"
+                download="autoShip-OpenAPI-Integration-Guide.md"
+              >
+                <span nz-icon nzType="download"></span>下载接口文档 (.md)
+              </a>
+              <button nz-button nzType="primary" (click)="openIntegrationModal()">
+                <span nz-icon nzType="plus"></span>新建接入方
+              </button>
+            </div>
           </div>
 
           <nz-table
@@ -581,12 +611,17 @@ import {
                     }
                   </nz-descriptions-item>
 
-                  <nz-descriptions-item nzTitle="Tailnet 管理端监听地址">
+                  <nz-descriptions-item nzTitle="管理后台页面端口 (Tailnet)">
                     <span class="as-mono">{{ pkiInfo().tailnetListenAddr || '-' }}</span>
                   </nz-descriptions-item>
 
-                  <nz-descriptions-item nzTitle="公网机器通信端口">
-                    <span class="as-mono">{{ pkiInfo().publicListenAddr || '-' }}</span>
+                  <nz-descriptions-item nzTitle="独立外部调用端口 (Open API)">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                      <span class="as-mono" style="font-weight: 600; color: #15803d;">{{ pkiInfo().publicListenAddr || '-' }}</span>
+                      <button nz-button nzSize="small" type="button" (click)="openExternalPortModal()">
+                        修改外部端口
+                      </button>
+                    </div>
                   </nz-descriptions-item>
 
                   <nz-descriptions-item nzTitle="Server 签名公钥 (Ed25519)">
@@ -1159,6 +1194,73 @@ import {
         </div>
       </ng-container>
     </nz-modal>
+
+    <!-- 修改独立外部调用端口弹窗（热切换立即生效） -->
+    <nz-modal
+      [nzVisible]="extPortModalVisible()"
+      nzTitle="修改独立外部调用端口（Open API & 更新 Agent）"
+      nzOkText="校验并立即切换端口"
+      [nzOkLoading]="submitting()"
+      (nzOnCancel)="extPortModalVisible.set(false)"
+      (nzOnOk)="submitUpdateExternalPort()"
+    >
+      <ng-container *nzModalContent>
+        <nz-alert
+          nzType="info"
+          nzShowIcon
+          [nzMessage]="'当前管理页面监听于 ' + (pkiInfo().tailnetListenAddr || '-') + '。外部调用端口禁止与管理页面共用同一端口，保存后服务端将在线热绑定新端口并写入配置文件。'"
+          style="margin-bottom: 14px;"
+        ></nz-alert>
+        <form nz-form nzLayout="vertical">
+          <nz-form-item style="margin-bottom: 0;">
+            <nz-form-label nzRequired>外部调用监听地址或端口号</nz-form-label>
+            <nz-form-control nzExtra="支持直接填纯端口号（如 9443 -> 自动绑定 0.0.0.0:9443）或完整网卡地址（如 0.0.0.0:19443）；若使用云服务器请同步在安全组放行该端口。">
+              <input
+                nz-input
+                class="as-mono"
+                name="extListenAddr"
+                [(ngModel)]="extPortFormAddr"
+                placeholder="如 9443 或 0.0.0.0:19443"
+              />
+            </nz-form-control>
+          </nz-form-item>
+        </form>
+      </ng-container>
+    </nz-modal>
+
+    <!-- 对外开放接口（Open API v1）对接开发文档宽抽屉 -->
+    <nz-drawer
+      [nzVisible]="apiDocDrawerVisible()"
+      [nzWidth]="920"
+      nzTitle="autoShip 对外开放接口（Open API v1）对接开发指南"
+      (nzOnClose)="apiDocDrawerVisible.set(false)"
+    >
+      <ng-container *nzDrawerContent>
+        <nz-spin [nzSpinning]="apiDocLoading()">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <span style="font-size: 13px; color: #64748b;">
+              可直接复制下方完整文档或下载 Markdown 文件发送给需要对接提需求的外部业务系统研发人员
+            </span>
+            <div style="display: flex; gap: 8px;">
+              <button nz-button nzSize="small" (click)="copyVal(apiDocMarkdown(), 'Open API 对接文档')">
+                <span nz-icon nzType="copy"></span>一键复制全文
+              </button>
+              <a
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                href="/api/v1/admin/integrations/open-api-doc?download=1"
+                target="_blank"
+                download="autoShip-OpenAPI-Integration-Guide.md"
+              >
+                <span nz-icon nzType="download"></span>下载 .md 文件
+              </a>
+            </div>
+          </div>
+          <pre class="as-terminal" style="max-height: calc(100vh - 170px); overflow-y: auto; white-space: pre-wrap; line-height: 1.6; font-size: 12.5px;">{{ apiDocMarkdown() }}</pre>
+        </nz-spin>
+      </ng-container>
+    </nz-drawer>
   `,
   styles: [
     `
@@ -1219,7 +1321,8 @@ export class SettingsComponent implements OnInit {
       defaultMaxTurns: 60,
       defaultMaxMinutes: 90
     },
-    artifactKeepCount: 5
+    artifactKeepCount: 5,
+    publicListenAddr: '0.0.0.0:9443'
   };
 
   // 新建产品弹窗
@@ -1268,6 +1371,13 @@ export class SettingsComponent implements OnInit {
   };
   readonly tokenResultModalVisible = signal<boolean>(false);
   readonly issuedTokenResult = signal<AgentEnrollTokenResult | null>(null);
+
+  // 独立外部调用端口修改弹窗与对接文档抽屉状态
+  readonly extPortModalVisible = signal<boolean>(false);
+  extPortFormAddr = '0.0.0.0:9443';
+  readonly apiDocDrawerVisible = signal<boolean>(false);
+  readonly apiDocLoading = signal<boolean>(false);
+  readonly apiDocMarkdown = signal<string>('');
 
   readonly formatDateTime = formatDateTime;
 
@@ -1349,7 +1459,8 @@ export class SettingsComponent implements OnInit {
             defaultMaxTurns: s.workflow?.defaultMaxTurns || 60,
             defaultMaxMinutes: s.workflow?.defaultMaxMinutes || 90
           },
-          artifactKeepCount: s.artifactKeepCount || 5
+          artifactKeepCount: s.artifactKeepCount || 5,
+          publicListenAddr: s.pki?.publicListenAddr || '0.0.0.0:9443'
         };
       },
       error: () => {}
@@ -1814,6 +1925,72 @@ export class SettingsComponent implements OnInit {
   }
 
   // ==================== 全局模型与飞书设置保存 ====================
+
+  /**
+   * 打开修改独立外部调用端口弹窗。
+   * @returns void
+   */
+  openExternalPortModal(): void {
+    this.extPortFormAddr = this.pkiInfo().publicListenAddr || '0.0.0.0:9443';
+    this.extPortModalVisible.set(true);
+  }
+
+  /**
+   * 提交新外部调用监听端口，由服务端校验与管理后台端口不冲突后在线热切换并持久化。
+   * @returns void
+   */
+  submitUpdateExternalPort(): void {
+    const candidate = this.extPortFormAddr.trim();
+    if (!candidate) {
+      this.message.warning('请输入外部调用监听端口（如 9443 或 0.0.0.0:19443）');
+      return;
+    }
+    this.submitting.set(true);
+    this.api
+      .updateSystemSettings({
+        ...this.settingsForm,
+        publicListenAddr: candidate
+      })
+      .subscribe({
+        next: (updated) => {
+          this.submitting.set(false);
+          this.extPortModalVisible.set(false);
+          if (updated?.pki) {
+            this.pkiInfo.set(updated.pki);
+            this.settingsForm.publicListenAddr = updated.pki.publicListenAddr;
+          }
+          this.message.success(
+            `外部调用端口已热切换至 ${updated?.pki?.publicListenAddr || candidate}`
+          );
+        },
+        error: (err: Error) => {
+          this.submitting.set(false);
+          this.message.error(err.message || '切换外部调用端口失败');
+        }
+      });
+  }
+
+  /**
+   * 打开对外接口（Open API v1）对接开发指南抽屉并拉取最新文档内容。
+   * @returns void
+   */
+  openApiDocDrawer(): void {
+    this.apiDocDrawerVisible.set(true);
+    if (this.apiDocMarkdown()) {
+      return;
+    }
+    this.apiDocLoading.set(true);
+    this.api.getOpenApiDoc().subscribe({
+      next: (res) => {
+        this.apiDocLoading.set(false);
+        this.apiDocMarkdown.set(res?.markdown || '');
+      },
+      error: (err: Error) => {
+        this.apiDocLoading.set(false);
+        this.message.error(err.message || '加载对外接口文档失败');
+      }
+    });
+  }
 
   /**
    * 保存全局系统设置（模型通道切换、飞书通知地址与制品保留份数）。

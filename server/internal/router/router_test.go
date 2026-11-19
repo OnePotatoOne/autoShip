@@ -107,3 +107,45 @@ func TestIntakeCompletionGateAndPrototypeSanitizer(t *testing.T) {
 		t.Fatalf("原型 HTML 未彻底剥离外部资源引用: %s", cleanHTML)
 	}
 }
+
+// TestExternalPortIsolationAndValidation 验证外部调用端口配置归一化、禁止与管理端同端口以及 /open/v1/ping 与 /open/v1/issues 仅挂载在外部引擎。
+// 参数 t 为 Go 测试上下文；无返回值。
+func TestExternalPortIsolationAndValidation(t *testing.T) {
+	addr, err := config.NormalizeAndValidatePublicListenAddr("19443", "100.90.160.50:9444")
+	if err != nil || addr != "0.0.0.0:19443" {
+		t.Fatalf("纯端口号归一化失败: got=%q err=%v", addr, err)
+	}
+	if _, collisionErr := config.NormalizeAndValidatePublicListenAddr("9444", "100.90.160.50:9444"); collisionErr == nil {
+		t.Fatalf("期望拦截与管理端相同的外部端口 9444，但未报错")
+	}
+	if _, collisionErr2 := config.NormalizeAndValidatePublicListenAddr("0.0.0.0:9444", "127.0.0.1:9444"); collisionErr2 == nil {
+		t.Fatalf("期望拦截与管理端同端口的 0.0.0.0:9444，但未报错")
+	}
+
+	cfgPath := t.TempDir() + "/server.yaml"
+	cfg, encKey, err := config.LoadOrInit(cfgPath)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	cfg.PublicAllowIPs = []string{"203.0.113.88"}
+	ca, err := pki.EnsureCA(t.TempDir() + "/pki")
+	if err != nil {
+		t.Fatalf("初始化 CA 失败: %v", err)
+	}
+	app := router.Build(cfg, cfgPath, encKey, ca, database.Get)
+
+	// PublicEngine 上存在 /open/v1/ping 与 /open/v1/issues（未带签名时返回 401 而非 404）
+	for _, p := range []string{"/open/v1/ping", "/open/v1/issues"} {
+		method := http.MethodGet
+		if p == "/open/v1/issues" {
+			method = http.MethodPost
+		}
+		req := httptest.NewRequest(method, p, nil)
+		req.RemoteAddr = "203.0.113.88:50000"
+		w := httptest.NewRecorder()
+		app.PublicEngine.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("外部端口路由 %s 期望命中 HMAC 鉴权返回 401，实际 %d", p, w.Code)
+		}
+	}
+}

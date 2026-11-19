@@ -26,6 +26,7 @@ embed-web: build-web
 		cp -R $(WEB_DIR)/dist/* $(EMBED_DIST)/; \
 	fi
 	touch $(EMBED_DIST)/.gitkeep
+	cp -f $(CURDIR)/docs/open-api-integration.md $(SERVER_DIR)/internal/static/open-api-integration.md
 
 ## 3. 编译当前宿主机全套 6 个可执行文件
 build-go:

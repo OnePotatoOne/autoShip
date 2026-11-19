@@ -2,9 +2,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -151,6 +154,14 @@ func LoadOrInit(path string) (*ServerConfig, []byte, error) {
 		cfg.Workflow.DefaultMaxMinutes = 90
 		dirty = true
 	}
+	normalizedPubAddr, addrErr := NormalizeAndValidatePublicListenAddr(cfg.PublicListenAddr, cfg.TailnetListenAddr)
+	if addrErr != nil {
+		return nil, nil, addrErr
+	}
+	if normalizedPubAddr != cfg.PublicListenAddr {
+		cfg.PublicListenAddr = normalizedPubAddr
+		dirty = true
+	}
 	if strings.TrimSpace(cfg.MasterSalt) == "" {
 		salt, err := crypto.GenerateRandomHex(16)
 		if err != nil {
@@ -231,6 +242,40 @@ func (c *ServerConfig) ArtifactDir() string {
 // 无入参；返回拼接后的目录路径。
 func (c *ServerConfig) AttachmentDir() string {
 	return filepath.Join(c.DataDir, "attachments")
+}
+
+// NormalizeAndValidatePublicListenAddr 规范化外部调用监听地址（支持纯端口号如 "9443" 自动补全为 "0.0.0.0:9443"），并强制校验其端口号合法且严禁与管理后台监听端口相同。
+// 参数 rawPublicAddr 为用户输入的外部监听地址或端口号，tailnetListenAddr 为当前管理后台监听地址；返回规范化后的 host:port 字符串及校验错误。
+func NormalizeAndValidatePublicListenAddr(rawPublicAddr, tailnetListenAddr string) (string, error) {
+	trimmed := strings.TrimSpace(rawPublicAddr)
+	if trimmed == "" {
+		return "", errors.New("外部调用监听端口不能为空")
+	}
+	// 支持直接填写纯数字端口号（如 "9443"）或 ":9443"，默认绑定到 0.0.0.0:<port>
+	if !strings.Contains(trimmed, ":") {
+		trimmed = "0.0.0.0:" + trimmed
+	} else if strings.HasPrefix(trimmed, ":") {
+		trimmed = "0.0.0.0" + trimmed
+	}
+
+	pubHost, pubPortStr, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("外部调用监听地址格式非法（示例 0.0.0.0:9443 或直接填端口号 9443）: %w", err)
+	}
+	pubPort, err := strconv.Atoi(pubPortStr)
+	if err != nil || pubPort < 1 || pubPort > 65535 {
+		return "", errors.New("外部调用端口号必须在 1 ~ 65535 之间")
+	}
+	if strings.TrimSpace(pubHost) == "" {
+		pubHost = "0.0.0.0"
+	}
+
+	if _, adminPortStr, splitErr := net.SplitHostPort(strings.TrimSpace(tailnetListenAddr)); splitErr == nil {
+		if adminPort, pErr := strconv.Atoi(adminPortStr); pErr == nil && adminPort == pubPort {
+			return "", fmt.Errorf("外部调用端口 (%d) 不能与服务端管理页面端口 (%d) 使用同一个端口，请指定其他独立端口", pubPort, adminPort)
+		}
+	}
+	return net.JoinHostPort(pubHost, strconv.Itoa(pubPort)), nil
 }
 
 // fileExists 检查指定路径是否存在普通文件；参数 path 为磁盘路径；存在普通文件返回 true，否则返回 false，由 LoadOrInit 内部调用。

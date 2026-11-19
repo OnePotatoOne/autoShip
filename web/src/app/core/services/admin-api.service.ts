@@ -766,6 +766,16 @@ export class AdminApiService {
   }
 
   /**
+   * 获取内嵌的《autoShip 对外开放接口对接开发指南》完整 Markdown 文档文本。
+   * @returns 返回包含 `markdown` 字符串的对象流；供设置页在线预览抽屉调用
+   */
+  getOpenApiDoc(): Observable<{ markdown: string }> {
+    return this.unwrap(
+      this.http.get<ApiEnvelope<{ markdown: string }>>('/api/v1/admin/integrations/open-api-doc')
+    );
+  }
+
+  /**
    * 查询所有已注册的开发 Agent 与更新 Agent 列表。
    * @returns `AgentNode[]` 数组
    */

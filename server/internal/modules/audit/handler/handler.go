@@ -67,7 +67,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	actor := c.GetString("autoship.admin_username")
 	if err := h.svc.UpdateSettings(in, actor); err != nil {
-		response.ServerError(c, "保存系统设置失败")
+		response.BadRequest(c, err.Error())
 		return
 	}
 	fp := ""

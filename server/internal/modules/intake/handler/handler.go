@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -32,6 +33,63 @@ func New(intakeSvc *service.Service, integSvc *integSvc.Service, reqSvc *reqSvc.
 		integSvc:  integSvc,
 		reqSvc:    reqSvc,
 	}
+}
+
+// Ping 处理 `GET /open/v1/ping`，供外部业务系统快速验证独立外部端口连通性、IP 白名单与 HMAC-SHA256 签名实现是否正确。
+// 参数 c 为 Gin 请求上下文；输出接入方基本信息与服务端当前秒级时间戳。
+func (h *Handler) Ping(c *gin.Context) {
+	integ := currentIntegration(c)
+	if integ == nil {
+		response.Unauthorized(c, "接入方未鉴权")
+		return
+	}
+	response.OK(c, gin.H{
+		"ok":              true,
+		"integrationId":   integ.ID,
+		"integrationName": integ.Name,
+		"appId":           integ.AppID,
+		"serverTimestamp": time.Now().Unix(),
+	})
+}
+
+// SubmitDirectIssue 处理 `POST /open/v1/issues`，供外部平台自有表单页面一步提交结构化需求或缺陷（支持 `Idempotency-Key` 防重）。
+// 参数 c 为 Gin 请求上下文；创建成功后返回 issueId、status 与 title。
+func (h *Handler) SubmitDirectIssue(c *gin.Context) {
+	integ := currentIntegration(c)
+	if integ == nil {
+		response.Unauthorized(c, "接入方未鉴权")
+		return
+	}
+	idemKey := c.GetHeader("Idempotency-Key")
+	if cached, _ := h.integSvc.CheckIdempotency(integ.ID, idemKey); cached != nil {
+		c.Data(cached.StatusCode, "application/json; charset=utf-8", []byte(cached.ResponseJSON))
+		return
+	}
+
+	var in service.DirectIssueInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		response.BadRequest(c, "提交需求参数格式非法")
+		return
+	}
+	created, err := h.intakeSvc.SubmitDirectIssue(integ, in)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	env := response.Envelope{
+		RequestID: response.RequestID(c),
+		Code:      0,
+		Message:   "success",
+		Data: gin.H{
+			"issueId":          created.ID,
+			"status":           created.Status,
+			"title":            created.Title,
+			"activeWorkItemId": created.ActiveWorkItemID,
+		},
+	}
+	raw, _ := json.Marshal(env)
+	h.integSvc.StoreIdempotency(integ.ID, idemKey, c.Request.Method, c.Request.URL.Path, http.StatusOK, string(raw))
+	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 }
 
 // CreateConversation 处理 `POST /open/v1/conversations`，支持 `Idempotency-Key` 幂等返回对话或表单模式。

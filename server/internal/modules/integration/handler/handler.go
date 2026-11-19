@@ -2,11 +2,13 @@
 package handler
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"autoship/internal/modules/integration/service"
+	"autoship/internal/static"
 	"autoship/pkg/response"
 )
 
@@ -77,4 +79,17 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"deleted": true})
+}
+
+// OpenAPIDoc 返回或作为附件下载内嵌的《autoShip 对外开放接口对接开发指南》Markdown 文档。
+// 参数 c 为 Gin 请求上下文；当查询参数 download=1 时输出 .md 附件下载流，否则输出 JSON。
+func (h *Handler) OpenAPIDoc(c *gin.Context) {
+	if c.Query("download") == "1" {
+		c.Header("Content-Disposition", `attachment; filename="autoShip-OpenAPI-Integration-Guide.md"`)
+		c.Data(http.StatusOK, "text/markdown; charset=utf-8", []byte(static.OpenAPIDocMarkdown))
+		return
+	}
+	response.OK(c, gin.H{
+		"markdown": static.OpenAPIDocMarkdown,
+	})
 }

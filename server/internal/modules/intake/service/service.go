@@ -312,6 +312,101 @@ func (s *Service) ConfirmCard(integ *integModel.Integration, convID uint64) (*re
 	return created, nil
 }
 
+// DirectIssueInput 定义外部业务系统不走多轮会话、通过表单页面调用 `POST /open/v1/issues` 一步直提结构化需求或缺陷的请求载荷。
+type DirectIssueInput struct {
+	ProductCode        string `json:"productCode"`
+	ModuleCode         string `json:"moduleCode"`
+	IssueType          string `json:"issueType"`
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	ExpectedBehavior   string `json:"expectedBehavior"`
+	ActualBehavior     string `json:"actualBehavior"`
+	ReproSteps         string `json:"reproSteps"`
+	OutOfScope         string `json:"outOfScope"`
+	AcceptanceCriteria string `json:"acceptanceCriteria"`
+	Priority           string `json:"priority"`
+	Reporter           struct {
+		ExternalUID string         `json:"externalUid"`
+		DisplayName string         `json:"displayName"`
+		Attributes  map[string]any `json:"attributes"`
+	} `json:"reporter"`
+	EnvInfo map[string]any `json:"envInfo"`
+}
+
+// SubmitDirectIssue 供外部业务系统一步提交已结构化的需求或缺陷：校验产品授权与频控，登记外部提交人，创建需求入池并按全局策略触发分拣或自动进入研发。
+// 参数 integ 为已验签接入方，in 为结构化提单载荷；返回新建的 *reqModel.Requirement 与错误。
+func (s *Service) SubmitDirectIssue(integ *integModel.Integration, in DirectIssueInput) (*reqModel.Requirement, error) {
+	prod, err := s.products.GetByCode(strings.TrimSpace(in.ProductCode))
+	if err != nil || prod == nil || !prod.IntakeEnabled {
+		return nil, errors.New("指定产品不存在或未开启需求收集")
+	}
+	if !s.integrations.IsProductBound(integ, prod.ID) {
+		return nil, errors.New("当前接入方未被授权操作该产品")
+	}
+	extUID := strings.TrimSpace(in.Reporter.ExternalUID)
+	if extUID == "" {
+		return nil, errors.New("必须提供提交人唯一标识 reporter.externalUid")
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return nil, errors.New("需求标题 title 不能为空")
+	}
+	if strings.TrimSpace(in.Description) == "" && strings.TrimSpace(in.ReproSteps) == "" && strings.TrimSpace(in.AcceptanceCriteria) == "" {
+		return nil, errors.New("请至少填写详细描述 description、复现步骤 reproSteps 或验收标准 acceptanceCriteria 之一")
+	}
+	if !s.integrations.AllowReporterRate(integ.ID, extUID) {
+		return nil, errors.New("当前提交人操作过于频繁，请稍后再试")
+	}
+
+	attrBytes, _ := json.Marshal(in.Reporter.Attributes)
+	rep, err := s.repo.UpsertReporter(&model.Reporter{
+		ProductID:      prod.ID,
+		IntegrationID:  integ.ID,
+		ExternalUID:    extUID,
+		DisplayName:    strings.TrimSpace(in.Reporter.DisplayName),
+		AttributesJSON: string(attrBytes),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	issueType := strings.ToLower(strings.TrimSpace(in.IssueType))
+	if issueType != "bug" && issueType != "feature" && issueType != "improvement" {
+		issueType = "feature"
+	}
+	priority := strings.ToUpper(strings.TrimSpace(in.Priority))
+	switch priority {
+	case "P0", "P1", "P2", "P3":
+	default:
+		priority = "P2"
+	}
+	envBytes, _ := json.Marshal(in.EnvInfo)
+	cardBytes, _ := json.Marshal(in)
+
+	reqEntity := &reqModel.Requirement{
+		ProductID:          prod.ID,
+		ModuleCode:         strings.TrimSpace(in.ModuleCode),
+		IssueType:          issueType,
+		Title:              strings.TrimSpace(in.Title),
+		Description:        strings.TrimSpace(in.Description),
+		ExpectedBehavior:   strings.TrimSpace(in.ExpectedBehavior),
+		ActualBehavior:     strings.TrimSpace(in.ActualBehavior),
+		ReproSteps:         strings.TrimSpace(in.ReproSteps),
+		OutOfScope:         strings.TrimSpace(in.OutOfScope),
+		AcceptanceCriteria: strings.TrimSpace(in.AcceptanceCriteria),
+		SummaryCardJSON:    string(cardBytes),
+		EnvInfoJSON:        string(envBytes),
+		Priority:           priority,
+		EffortSize:         "M",
+		ReadinessScore:     85,
+	}
+	return s.requirements.SubmitFromIntake(reqEntity, &reqModel.RequirementReporter{
+		ReporterID:    rep.ID,
+		IntegrationID: integ.ID,
+		ExternalUID:   extUID,
+		DisplayName:   strings.TrimSpace(in.Reporter.DisplayName),
+	})
+}
+
 // ValidateCompletionGate 由纯代码严格把关提交完成门（5.3 节：必填项缺失或过于简短含糊时一律拒绝提交）。
 // 参数 d 为当前结构化草稿，latestPrototypeID 为会话已生成的原型 ID；返回缺失或含糊字段的中文说明切片（空切片表示通过）。
 func ValidateCompletionGate(d StructuredDraft, latestPrototypeID uint64) []string {
