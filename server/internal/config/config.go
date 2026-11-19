@@ -28,6 +28,7 @@ type ServerConfig struct {
 	Database          DatabaseConfig `yaml:"database"`          // MySQL 8 数据库连接参数
 	LLM               LLMConfig      `yaml:"llm"`               // 客服与分拣模型调用配置（支持中继或直连开关）
 	Notify            NotifyConfig   `yaml:"notify"`            // 飞书通知 Webhook 默认配置
+	Workflow          WorkflowConfig `yaml:"workflow"`          // 需求入池与状态变更触发自动研发的流转策略配置
 }
 
 // DatabaseConfig 定义 MySQL 8 数据库连接池与库名参数。
@@ -67,6 +68,16 @@ type NotifyConfig struct {
 	Enabled          bool   `yaml:"enabled"`          // 是否启用飞书推送
 }
 
+// WorkflowConfig 定义新增需求入池与需求状态变更触发自动研发的全局流转策略。
+type WorkflowConfig struct {
+	AutoStartOnNewRequirement bool `yaml:"autoStartOnNewRequirement"` // 新增需求（外部提交或后台录入）是否自动进入研发状态并下发开发任务（默认 false：先由管理员确认改状态后再开发）
+	AutoStartOnConfirmStatus  bool `yaml:"autoStartOnConfirmStatus"`  // 管理员确认要做并将状态改为 scheduled 或 in_progress 时是否自动启动开发任务（默认 true）
+	DefaultPlanConfirm        bool `yaml:"defaultPlanConfirm"`        // 自动触发研发任务时是否默认开启“方案确认门”（默认 true）
+	DefaultTokenBudget        int  `yaml:"defaultTokenBudget"`        // 自动触发研发任务时的默认 Token 预算上限（默认 400000）
+	DefaultMaxTurns           int  `yaml:"defaultMaxTurns"`           // 自动触发研发任务时的默认最大交互轮数（默认 60）
+	DefaultMaxMinutes         int  `yaml:"defaultMaxMinutes"`         // 自动触发研发任务时的默认最大执行分钟数（默认 90）
+}
+
 // Default 返回带安全默认值的 ServerConfig 实例。
 // 无入参；返回填充好默认监听端口、目录及预算上限的 *ServerConfig。
 func Default() *ServerConfig {
@@ -96,6 +107,14 @@ func Default() *ServerConfig {
 		Notify: NotifyConfig{
 			Enabled: false,
 		},
+		Workflow: WorkflowConfig{
+			AutoStartOnNewRequirement: false,
+			AutoStartOnConfirmStatus:  true,
+			DefaultPlanConfirm:        true,
+			DefaultTokenBudget:        400000,
+			DefaultMaxTurns:           60,
+			DefaultMaxMinutes:         90,
+		},
 	}
 }
 
@@ -118,6 +137,18 @@ func LoadOrInit(path string) (*ServerConfig, []byte, error) {
 	}
 	if cfg.ArtifactKeepCount <= 0 {
 		cfg.ArtifactKeepCount = 10
+		dirty = true
+	}
+	if cfg.Workflow.DefaultTokenBudget <= 0 {
+		cfg.Workflow.DefaultTokenBudget = 400000
+		dirty = true
+	}
+	if cfg.Workflow.DefaultMaxTurns <= 0 {
+		cfg.Workflow.DefaultMaxTurns = 60
+		dirty = true
+	}
+	if cfg.Workflow.DefaultMaxMinutes <= 0 {
+		cfg.Workflow.DefaultMaxMinutes = 90
 		dirty = true
 	}
 	if strings.TrimSpace(cfg.MasterSalt) == "" {

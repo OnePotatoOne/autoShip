@@ -38,3 +38,13 @@ llm:
 notify:
   enabled: false
   feishuWebhookURL: ""
+
+workflow:
+  # false（默认）：新需求收到后先待人工确认并更改状态，再启动开发任务
+  # true：新增需求入池后自动转入 in_progress 并向开发 Agent (Antigravity) 下发研发指令
+  autoStartOnNewRequirement: false
+  autoStartOnConfirmStatus: true
+  defaultPlanConfirm: true
+  defaultTokenBudget: 400000
+  defaultMaxTurns: 60
+  defaultMaxMinutes: 90

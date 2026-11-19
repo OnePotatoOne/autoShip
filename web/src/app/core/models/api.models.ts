@@ -283,6 +283,7 @@ export interface CreateRequirementPayload {
   issueType: string;
   title: string;
   priority: string;
+  status?: string;
   description: string;
   acceptanceCriteria: string;
   expectedBehavior: string;
@@ -652,6 +653,14 @@ export interface SystemSettingsView {
     feishuWebhookURL: string;
     enabled: boolean;
   };
+  workflow?: {
+    autoStartOnNewRequirement: boolean;
+    autoStartOnConfirmStatus: boolean;
+    defaultPlanConfirm: boolean;
+    defaultTokenBudget: number;
+    defaultMaxTurns: number;
+    defaultMaxMinutes: number;
+  };
   pki: {
     caFingerprint: string;
     publicListenAddr: string;
@@ -678,6 +687,14 @@ export interface UpdateSystemSettingsPayload {
   notify: {
     feishuWebhookURL: string;
     enabled: boolean;
+  };
+  workflow?: {
+    autoStartOnNewRequirement: boolean;
+    autoStartOnConfirmStatus: boolean;
+    defaultPlanConfirm: boolean;
+    defaultTokenBudget: number;
+    defaultMaxTurns: number;
+    defaultMaxMinutes: number;
   };
   artifactKeepCount: number;
 }

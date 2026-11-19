@@ -15,6 +15,15 @@ httpProxy: ""
 chromeBinaryPath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 feishuWebhookUrl: ""
 
+# 开发引擎驱动：支持 "agy"（直接调用本机 Antigravity CLI 处理研发）或 "builtin"（内置 OpenAI 兼容会话引擎）
+engine:
+  driver: "agy"
+  agyBinaryPath: "~/.local/bin/agy"
+  agyModel: ""
+  agyEffort: ""
+  agyAutoApprove: true
+  agySandbox: false
+
 # 模型受限中继服务（仅监听 tailnet 地址，供 Server 客服澄清与自动分拣调用）
 relay:
   enabled: true

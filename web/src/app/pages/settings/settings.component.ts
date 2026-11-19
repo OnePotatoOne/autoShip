@@ -315,16 +315,97 @@ import {
           </nz-table>
         </nz-tab>
 
-        <!-- ==================== Tab 4：模型地址、飞书通知与自建 CA 证书 ==================== -->
-        <nz-tab nzTitle="模型通道 · 飞书通知 · PKI 根证书">
+        <!-- ==================== Tab 4：研发流转策略、模型地址、飞书通知与自建 CA 证书 ==================== -->
+        <nz-tab nzTitle="研发流转 · 模型通道 · 飞书 · PKI">
           <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px;">
-            <!-- 左列：模型调用通道与飞书配置 -->
+            <!-- 左列：研发流转自动化、模型调用通道与飞书配置 -->
             <div>
-              <h3 class="as-section-title">
-                <span nz-icon nzType="robot"></span>
-                <span>模型调用通道（中继 / 直连开关）与飞书通知配置</span>
-              </h3>
               <form nz-form nzLayout="vertical" (ngSubmit)="saveGlobalSettings()">
+                <h3 class="as-section-title">
+                  <span nz-icon nzType="thunderbolt"></span>
+                  <span>需求研发自动流转策略（联动 Mac 开发 Agent / Antigravity）</span>
+                </h3>
+                <div class="as-subtle-box" style="margin-bottom: 18px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px;">
+                    <div>
+                      <div style="font-weight: 600; color: #0f172a;">新增需求自动进入研发状态</div>
+                      <div style="font-size: 12.5px; color: #64748b; margin-top: 2px;">
+                        关闭（默认）：新需求收到后先待你确认要做、修改需求状态后再开始开发；开启：新需求入池后自动流转为「进行中」并下发开发 Agent (Antigravity) 开始研发。
+                      </div>
+                    </div>
+                    <nz-switch
+                      name="wfAutoNew"
+                      [(ngModel)]="settingsForm.workflow.autoStartOnNewRequirement"
+                      nzCheckedChildren="自动入研"
+                      nzUnCheckedChildren="人工确认"
+                    ></nz-switch>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; padding-top: 8px; border-top: 1px dashed #e2e8f0;">
+                    <div>
+                      <div style="font-weight: 600; color: #0f172a;">确认立项改状态后自动开始研发</div>
+                      <div style="font-size: 12.5px; color: #64748b; margin-top: 2px;">
+                        当你在需求池把待确认需求改为「待排期 / 确认要做」或「进行中」时，自动创建开发任务并派发给开发 Agent。
+                      </div>
+                    </div>
+                    <nz-switch
+                      name="wfAutoConfirm"
+                      [(ngModel)]="settingsForm.workflow.autoStartOnConfirmStatus"
+                      nzCheckedChildren="已开启"
+                      nzUnCheckedChildren="仅改状态"
+                    ></nz-switch>
+                  </div>
+
+                  <nz-form-item style="margin: 8px 0;">
+                    <label nz-checkbox name="wfPlanConfirm" [(ngModel)]="settingsForm.workflow.defaultPlanConfirm">
+                      自动触发研发任务时默认开启「方案确认门」（先由 Antigravity 生成方案供确认后再改代码）
+                    </label>
+                  </nz-form-item>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                    <nz-form-item style="margin-bottom: 0;">
+                      <nz-form-label>默认单任务 Token 预算</nz-form-label>
+                      <nz-form-control>
+                        <nz-input-number
+                          name="wfTok"
+                          [(ngModel)]="settingsForm.workflow.defaultTokenBudget"
+                          [nzMin]="20000"
+                          [nzStep]="50000"
+                          style="width: 100%;"
+                        ></nz-input-number>
+                      </nz-form-control>
+                    </nz-form-item>
+                    <nz-form-item style="margin-bottom: 0;">
+                      <nz-form-label>默认最大交互轮数</nz-form-label>
+                      <nz-form-control>
+                        <nz-input-number
+                          name="wfTurns"
+                          [(ngModel)]="settingsForm.workflow.defaultMaxTurns"
+                          [nzMin]="5"
+                          [nzMax]="300"
+                          style="width: 100%;"
+                        ></nz-input-number>
+                      </nz-form-control>
+                    </nz-form-item>
+                    <nz-form-item style="margin-bottom: 0;">
+                      <nz-form-label>默认最大时长 (分钟)</nz-form-label>
+                      <nz-form-control>
+                        <nz-input-number
+                          name="wfMins"
+                          [(ngModel)]="settingsForm.workflow.defaultMaxMinutes"
+                          [nzMin]="10"
+                          [nzMax]="480"
+                          style="width: 100%;"
+                        ></nz-input-number>
+                      </nz-form-control>
+                    </nz-form-item>
+                  </div>
+                </div>
+
+                <h3 class="as-section-title">
+                  <span nz-icon nzType="robot"></span>
+                  <span>模型调用通道（中继 / 直连开关）与飞书通知配置</span>
+                </h3>
                 <nz-form-item>
                   <nz-form-label nzRequired>客服与分拣模型路由模式</nz-form-label>
                   <nz-form-control>
@@ -1130,6 +1211,14 @@ export class SettingsComponent implements OnInit {
       feishuWebhookURL: '',
       enabled: true
     },
+    workflow: {
+      autoStartOnNewRequirement: false,
+      autoStartOnConfirmStatus: true,
+      defaultPlanConfirm: true,
+      defaultTokenBudget: 400000,
+      defaultMaxTurns: 60,
+      defaultMaxMinutes: 90
+    },
     artifactKeepCount: 5
   };
 
@@ -1251,6 +1340,14 @@ export class SettingsComponent implements OnInit {
           notify: {
             feishuWebhookURL: s.notify?.feishuWebhookURL || '',
             enabled: s.notify?.enabled !== false
+          },
+          workflow: {
+            autoStartOnNewRequirement: Boolean(s.workflow?.autoStartOnNewRequirement),
+            autoStartOnConfirmStatus: s.workflow?.autoStartOnConfirmStatus !== false,
+            defaultPlanConfirm: s.workflow?.defaultPlanConfirm !== false,
+            defaultTokenBudget: s.workflow?.defaultTokenBudget || 400000,
+            defaultMaxTurns: s.workflow?.defaultMaxTurns || 60,
+            defaultMaxMinutes: s.workflow?.defaultMaxMinutes || 90
           },
           artifactKeepCount: s.artifactKeepCount || 5
         };

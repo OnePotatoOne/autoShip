@@ -3,7 +3,9 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +51,7 @@ type Daemon struct {
 	heartbeatInterval time.Duration
 	reconnectBaseWait time.Duration
 	tlsConfigOverride *tls.Config
+	cfgFilePath       string
 
 	mu             sync.Mutex
 	seenCmdIDs     map[string]bool
@@ -132,19 +135,24 @@ func (d *Daemon) SetTimingsAndTLS(heartbeat, reconnectBase time.Duration, tlsCfg
 	}
 }
 
+// SetConfigPath 记录当前 YAML 配置文件磁盘路径，以便首次令牌注册成功后回写数字 AgentID 并清除一次性令牌。
+// 参数 path 为配置文件路径；无返回值。
+func (d *Daemon) SetConfigPath(path string) {
+	d.cfgFilePath = config.ExpandPath(path)
+}
+
 // EnsureAgentIdentity 确保钥匙串中已生成开发 Agent 自身的 Ed25519 身份密钥对；首次不存在时自动创建并返回公钥。
 // 无入参；返回 Base64 公钥、私钥及钥匙串错误。
 func (d *Daemon) EnsureAgentIdentity() (pubB64 string, privB64 string, err error) {
 	priv, getErr := d.secrets.Get(d.cfg.KeychainService, publisher.AgentIdentityAccount)
 	if getErr == nil && strings.TrimSpace(priv) != "" {
-		parsedPriv, parseErr := crypto.ParseEd25519PrivateKey(priv)
-		if parseErr == nil {
-			pubRaw := parsedPriv.Public().([]byte)
-			_ = pubRaw
-		}
-		// 若同时保存了公钥条目则直接读取，否则由标准库重新导出公钥
 		if savedPub, pErr := d.secrets.Get(d.cfg.KeychainService, "agent_ed25519_pub"); pErr == nil && savedPub != "" {
 			return savedPub, priv, nil
+		}
+		if parsedPriv, parseErr := crypto.ParseEd25519PrivateKey(priv); parseErr == nil && len(parsedPriv) == ed25519.PrivateKeySize {
+			derivedPub := base64.StdEncoding.EncodeToString([]byte(parsedPriv[ed25519.SeedSize:]))
+			_ = d.secrets.Set(d.cfg.KeychainService, "agent_ed25519_pub", derivedPub)
+			return derivedPub, priv, nil
 		}
 	}
 	pub, newPriv, genErr := crypto.GenerateEd25519KeyPair()
@@ -175,46 +183,86 @@ func (d *Daemon) BootstrapRegisterIfNeeded(ctx context.Context) error {
 	}
 
 	reqBody, _ := json.Marshal(map[string]any{
-		"agentId":        d.cfg.AgentID,
-		"kind":           "dev",
-		"bootstrapToken": token,
-		"publicKeyB64":   pubB64,
-		"tailnetIp":      d.cfg.TailnetIP,
-		"csrPem":         string(csrPEM),
+		"agentId":         d.cfg.AgentID,
+		"kind":            "dev",
+		"token":           token,
+		"bootstrapToken":  token,
+		"publicKeyB64":    pubB64,
+		"agentVersion":    "v0.2.0",
+		"tailnetIP":       d.cfg.TailnetIP,
+		"tailnetIp":       d.cfg.TailnetIP,
+		"relayListenAddr": d.cfg.Relay.ListenAddr,
+		"csrPEM":          string(csrPEM),
+		"csrPem":          string(csrPEM),
 	})
 	client, err := d.newServerHTTPClient()
 	if err != nil {
 		return err
 	}
-	regURL := strings.TrimRight(d.cfg.ServerURL, "/") + "/agent/v1/register"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, regURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(httpReq)
+	baseURL := strings.TrimRight(d.cfg.ServerURL, "/")
+	resp, err := postRegisterJSON(ctx, client, baseURL+"/agent/v1/dev/register", reqBody)
 	if err != nil {
 		return fmt.Errorf("请求 Server 注册开发 Agent 失败: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		_ = resp.Body.Close()
+		resp, err = postRegisterJSON(ctx, client, baseURL+"/agent/v1/register", reqBody)
+		if err != nil {
+			return fmt.Errorf("请求回退注册接口失败: %w", err)
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Server 拒绝注册令牌: HTTP %d", resp.StatusCode)
 	}
-	var regResp struct {
-		CertChainPEM       string `json:"certChainPem"`
-		ServerPublicKeyB64 string `json:"serverPublicKeyB64"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&regResp); err == nil {
-		if regResp.CertChainPEM != "" {
+
+	var rawMap map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rawMap); err == nil {
+		dataMap := rawMap
+		if inner, ok := rawMap["data"].(map[string]any); ok {
+			dataMap = inner
+		}
+		certPEM := pickStrField(dataMap, "certChainPEM", "certChainPem")
+		if certPEM != "" {
 			_ = os.MkdirAll(filepath.Dir(d.cfg.Relay.CertFile), 0755)
-			_ = os.WriteFile(d.cfg.Relay.CertFile, []byte(regResp.CertChainPEM), 0644)
+			_ = os.WriteFile(d.cfg.Relay.CertFile, []byte(certPEM), 0644)
 			_ = os.WriteFile(d.cfg.Relay.KeyFile, keyPEM, 0600)
 		}
-		if regResp.ServerPublicKeyB64 != "" {
-			d.cfg.ServerPublicKeyB64 = regResp.ServerPublicKeyB64
+		srvPub := pickStrField(dataMap, "serverSignPubB64", "serverPublicKeyB64")
+		if srvPub != "" {
+			d.cfg.ServerPublicKeyB64 = srvPub
+		}
+		if numID, ok := dataMap["agentId"].(float64); ok && numID > 0 {
+			d.cfg.AgentID = fmt.Sprintf("%.0f", numID)
+		} else if strID, ok := dataMap["agentId"].(string); ok && strings.TrimSpace(strID) != "" {
+			d.cfg.AgentID = strings.TrimSpace(strID)
+		}
+		d.cfg.BootstrapToken = ""
+		if d.cfgFilePath != "" {
+			_ = config.Save(d.cfgFilePath, d.cfg)
 		}
 	}
 	return nil
+}
+
+// postRegisterJSON 发送单次 JSON POST 注册请求并返回 HTTP 响应。
+func postRegisterJSON(ctx context.Context, client *http.Client, targetURL string, body []byte) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	return client.Do(httpReq)
+}
+
+// pickStrField 依次按候选键名读取非空字符串值。
+func pickStrField(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // EmitEvent 将事件持久化写入本地 JSONL 发件箱；若当前 WSS 在线则立即推送，离线则自动积压待重连后续传。
@@ -425,19 +473,82 @@ func (d *Daemon) executeCommandPayload(ctx context.Context, cmd envelope.Message
 	case "cmd.work.start", "cmd.work.resume":
 		d.runDevWorkCommand(ctx, cmd.Payload)
 
+	case "cmd.work.plan_decision":
+		var p struct {
+			WorkItemID uint64 `json:"workItemId"`
+			Approved   bool   `json:"approved"`
+			Comment    string `json:"comment"`
+		}
+		if json.Unmarshal(cmd.Payload, &p) == nil && p.WorkItemID > 0 {
+			if snap, ok := d.loadTaskSnapshot(p.WorkItemID); ok {
+				if p.Approved {
+					snap.TaskReq.PlanConfirmed = true
+					snap.TaskReq.ApprovedPlan = snap.LastPlan
+				} else {
+					snap.TaskReq.PlanConfirmed = false
+					snap.TaskReq.ApprovedPlan = nil
+				}
+				if strings.TrimSpace(p.Comment) != "" {
+					snap.TaskReq.OwnerReplies = append(snap.TaskReq.OwnerReplies, p.Comment)
+				}
+				d.executeResolvedWorkTask(ctx, snap.TaskReq, snap.WorkItemID, snap.ProductID)
+			}
+		}
+
+	case "cmd.work.answer":
+		var p struct {
+			WorkItemID uint64 `json:"workItemId"`
+			Answer     string `json:"answer"`
+		}
+		if json.Unmarshal(cmd.Payload, &p) == nil && p.WorkItemID > 0 {
+			if snap, ok := d.loadTaskSnapshot(p.WorkItemID); ok {
+				if strings.TrimSpace(p.Answer) != "" {
+					snap.TaskReq.OwnerReplies = append(snap.TaskReq.OwnerReplies, p.Answer)
+				}
+				d.executeResolvedWorkTask(ctx, snap.TaskReq, snap.WorkItemID, snap.ProductID)
+			}
+		}
+
+	case "cmd.work.review_decision":
+		var p struct {
+			WorkItemID uint64 `json:"workItemId"`
+			Action     string `json:"action"`
+			Comment    string `json:"comment"`
+		}
+		if json.Unmarshal(cmd.Payload, &p) == nil && p.WorkItemID > 0 {
+			if p.Action == "abandon" && d.previewManager != nil {
+				_ = d.previewManager.Stop(ctx, fmt.Sprintf("work-%d", p.WorkItemID))
+				return
+			}
+			if p.Action == "reject" {
+				if snap, ok := d.loadTaskSnapshot(p.WorkItemID); ok {
+					snap.TaskReq.PlanConfirmed = true
+					snap.TaskReq.ApprovedPlan = snap.LastPlan
+					if strings.TrimSpace(p.Comment) != "" {
+						snap.TaskReq.OwnerReplies = append(snap.TaskReq.OwnerReplies, "验收打回修改意见："+p.Comment)
+					}
+					d.executeResolvedWorkTask(ctx, snap.TaskReq, snap.WorkItemID, snap.ProductID)
+				}
+			}
+		}
+
 	case "cmd.release.publish":
 		d.runReleasePublishCommand(ctx, cmd.Payload)
 	}
 }
 
-// runDevWorkCommand 获取并行开发槽位与防休眠锁，准备独立 worktree 并调用自研引擎执行任务。
+// runDevWorkCommand 解析直接或 Server 格式的开工指令并进入并发受控的任务执行流。
 func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessage) {
-	var taskReq engine.TaskRequest
-	if err := json.Unmarshal(rawPayload, &taskReq); err != nil {
-		_, _ = d.EmitEvent("evt.work.failed", map[string]string{"error": "解析任务指令失败: " + err.Error()})
+	taskReq, workItemID, productID, err := d.decodeInboundWorkRequest(rawPayload)
+	if err != nil {
+		_, _ = d.EmitEvent("evt.work.failed", map[string]any{"workItemId": workItemID, "error": "解析任务指令失败: " + err.Error()})
 		return
 	}
+	d.executeResolvedWorkTask(ctx, taskReq, workItemID, productID)
+}
 
+// executeResolvedWorkTask 获取并行开发槽位与防休眠锁，准备独立 worktree 并调用编码引擎（builtin 或 agy）执行任务。
+func (d *Daemon) executeResolvedWorkTask(ctx context.Context, taskReq engine.TaskRequest, workItemID, productID uint64) {
 	select {
 	case d.taskSem <- struct{}{}:
 		defer func() { <-d.taskSem }()
@@ -455,7 +566,7 @@ func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessa
 	if strings.TrimSpace(taskReq.WorktreeDir) == "" && d.wsManager != nil {
 		wtSess, err := d.wsManager.CreateTaskWorktree(ctx, taskReq.Product, taskReq.WorkID, taskReq.TargetModule, taskReq.BaseRef)
 		if err != nil {
-			_, _ = d.EmitEvent("evt.work.failed", map[string]string{"workId": taskReq.WorkID, "error": err.Error()})
+			_, _ = d.EmitEvent("evt.work.failed", map[string]any{"workId": taskReq.WorkID, "workItemId": workItemID, "error": err.Error()})
 			return
 		}
 		taskReq.WorktreeDir = wtSess.WorktreeDir
@@ -466,10 +577,23 @@ func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessa
 		taskReq.TranscriptPath = filepath.Join(d.cfg.TranscriptsDir(), taskReq.WorkID+".jsonl")
 	}
 	taskReq.OnActivity = func(evtType, message string, meta any) {
-		_, _ = d.EmitEvent(evtType, map[string]any{"workId": taskReq.WorkID, "message": message, "meta": meta})
+		_, _ = d.EmitEvent(evtType, map[string]any{
+			"workId":     taskReq.WorkID,
+			"workItemId": workItemID,
+			"summary":    message,
+			"message":    message,
+			"meta":       meta,
+		})
 	}
 	taskReq.OnSandboxIntercept = func(evt *sandbox.InterceptEvent) {
 		_, _ = d.EmitEvent("evt.sandbox.intercepted", evt)
+		if workItemID > 0 && evt != nil && len(evt.BlockedPaths) > 0 {
+			_, _ = d.EmitEvent("evt.work.sandbox_blocked", map[string]any{
+				"workItemId":  workItemID,
+				"productId":   productID,
+				"blockedPath": evt.BlockedPaths[0],
+			})
+		}
 	}
 
 	if d.devEngine == nil {
@@ -477,11 +601,19 @@ func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessa
 	}
 	outcome, err := d.devEngine.Execute(ctx, &taskReq)
 	if err != nil {
-		_, _ = d.EmitEvent("evt.work.failed", map[string]string{"workId": taskReq.WorkID, "error": err.Error()})
+		_, _ = d.EmitEvent("evt.work.failed", map[string]any{"workId": taskReq.WorkID, "workItemId": workItemID, "error": err.Error()})
 		return
 	}
 
+	d.saveTaskSnapshot(persistedTaskSnapshot{
+		WorkItemID: workItemID,
+		ProductID:  productID,
+		TaskReq:    taskReq,
+		LastPlan:   outcome.Plan,
+	})
+
 	// 若进入待验收且配置了预览配方，启动本地预览实例并将地址与随机测试账号填入验收包
+	var pvURL, pvUser, pvPass string
 	if outcome.Status == engine.OutcomeReadyForAcceptance && outcome.AcceptancePackage != nil &&
 		d.previewManager != nil && strings.TrimSpace(taskReq.Product.Preview.StartCmd) != "" {
 		if pvSess, pvErr := d.previewManager.Start(ctx, preview.StartRequest{
@@ -490,6 +622,9 @@ func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessa
 			WorktreeDir: taskReq.WorktreeDir,
 			TempDir:     taskReq.TempDir,
 		}); pvErr == nil {
+			pvURL = pvSess.ExternalURL
+			pvUser = pvSess.TestUsername
+			pvPass = pvSess.TestPassword
 			outcome.AcceptancePackage.PreviewURL = pvSess.ExternalURL
 			outcome.AcceptancePackage.PreviewTestAccount = pvSess.TestUsername + " / " + pvSess.TestPassword
 		}
@@ -516,9 +651,11 @@ func (d *Daemon) runDevWorkCommand(ctx context.Context, rawPayload json.RawMessa
 				taskReq.WorkID, taskReq.Product.ProductCode, outcome.AskOwnerQuestion))
 	}
 
+	d.emitServerCompatibleOutcome(workItemID, outcome, pvURL, pvUser, pvPass)
 	_, _ = d.EmitEvent("evt.work.outcome", map[string]any{
-		"workId":  taskReq.WorkID,
-		"outcome": outcome,
+		"workId":     taskReq.WorkID,
+		"workItemId": workItemID,
+		"outcome":    outcome,
 	})
 }
 

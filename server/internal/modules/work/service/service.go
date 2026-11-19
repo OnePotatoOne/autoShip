@@ -563,6 +563,38 @@ func (s *Service) HandleDevEnvelope(_ uint64, msg envelope.Message) error {
 				)
 			}
 		}
+
+	case "evt.work.failed":
+		var p struct {
+			WorkItemID uint64 `json:"workItemId"`
+			Error      string `json:"error"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return err
+		}
+		item, _ := s.repo.GetByID(p.WorkItemID)
+		if item != nil {
+			qRaw, _ := json.Marshal(map[string]string{
+				"id":       "err-1",
+				"question": "开发 Agent 执行遇到异常，请检查环境或答复后重试：" + p.Error,
+			})
+			item.PendingQuestionJSON = string(qRaw)
+			item.Status = "awaiting_answer"
+			_ = s.repo.Save(item)
+			_ = s.runs.RecordActivity(&runModel.RunActivity{
+				ProductID:  item.ProductID,
+				WorkItemID: item.ID,
+				Stage:      "coding",
+				Kind:       "error",
+				Summary:    "开发 Agent 执行异常：" + p.Error,
+			})
+			if s.notifier != nil {
+				s.notifier.NotifyAsync(notifySvc.EventAskOwner,
+					fmt.Sprintf("开发任务 #%d 执行异常待处理：%s", item.ID, item.Title),
+					p.Error,
+				)
+			}
+		}
 	}
 	return nil
 }

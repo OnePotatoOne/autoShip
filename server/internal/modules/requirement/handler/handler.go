@@ -96,6 +96,27 @@ func (h *Handler) Triage(c *gin.Context) {
 	response.OK(c, req)
 }
 
+// UpdateStatus 手动设置单条需求的业务状态，并支持在确认进入研发状态时自动创建开发任务。
+// 参数 c 为 Gin 请求上下文；输出更新后的 requirement 与可选触发的 workItemId。
+func (h *Handler) UpdateStatus(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	var in service.UpdateStatusInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		response.BadRequest(c, "状态变更参数格式非法")
+		return
+	}
+	actor := c.GetString("autoship.admin_username")
+	req, workID, err := h.svc.UpdateStatus(id, in, actor)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.OK(c, gin.H{
+		"requirement": req,
+		"workItemId":  workID,
+	})
+}
+
 // Link 建立相似需求关联。
 // 参数 c 为 Gin 请求上下文；输出成功状态。
 func (h *Handler) Link(c *gin.Context) {

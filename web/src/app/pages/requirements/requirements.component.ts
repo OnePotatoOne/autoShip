@@ -78,9 +78,16 @@ import {
         <h1 class="as-page-title">
           <span nz-icon nzType="bulb"></span>
           <span>需求池与澄清归档</span>
+          <nz-tag
+            [nzColor]="autoStartNewEnabled() ? 'purple' : 'blue'"
+            style="margin-left: 8px; font-weight: 500; cursor: pointer;"
+            (click)="jumpToWorkflowSettings()"
+          >
+            {{ autoStartNewEnabled() ? '当前策略：新增需求自动进入研发（点击调整）' : '当前策略：新需求先由人工确认改状态再研发（点击调整）' }}
+          </nz-tag>
         </h1>
         <p class="as-page-subtitle">
-          集中管理各产品反馈与手动录入需求；人工关口 1：挑选需求、确认预算并点击“开工”启动自动研发
+          集中管理各产品反馈与手动录入需求；支持手动修改任意需求状态、确认立项触发 Antigravity 自动开发，或在系统设置开启新需求自动入研
         </p>
       </div>
       <div style="display: flex; gap: 10px;">
@@ -245,10 +252,17 @@ import {
               <td>
                 <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                   <button nz-button nzSize="small" (click)="openDetailDrawer(item)">详情</button>
-                  @if (item.status !== 'closed' && item.status !== 'released' && item.status !== 'online') {
-                    <button nz-button nzSize="small" (click)="openTriageModal(item)">分拣</button>
-                  }
-                  @if (canStartWork(item)) {
+                  <button nz-button nzSize="small" (click)="openStatusModal(item)">改状态</button>
+                  @if (isAwaitingConfirmToDo(item)) {
+                    <button
+                      nz-button
+                      nzType="primary"
+                      nzSize="small"
+                      (click)="openConfirmToDoModal(item)"
+                    >
+                      确认要做
+                    </button>
+                  } @else if (canStartWork(item)) {
                     <button nz-button nzType="primary" nzSize="small" (click)="openStartWorkModal(item)">
                       开工
                     </button>
@@ -325,7 +339,7 @@ import {
             </nz-form-item>
           </div>
 
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
             <nz-form-item>
               <nz-form-label nzRequired>需求类型</nz-form-label>
               <nz-form-control>
@@ -345,6 +359,17 @@ import {
                   <nz-option nzValue="P1" nzLabel="P1 高优先级"></nz-option>
                   <nz-option nzValue="P2" nzLabel="P2 常规排期"></nz-option>
                   <nz-option nzValue="P3" nzLabel="P3 低优先级"></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+
+            <nz-form-item>
+              <nz-form-label nzRequired>录入后初始状态</nz-form-label>
+              <nz-form-control>
+                <nz-select name="cInitStatus" [(ngModel)]="createForm.status">
+                  <nz-option nzValue="submitted" nzLabel="已提交（待我确认要做）"></nz-option>
+                  <nz-option nzValue="scheduled" nzLabel="待排期"></nz-option>
+                  <nz-option nzValue="in_progress" nzLabel="直接进入研发 (in_progress)"></nz-option>
                 </nz-select>
               </nz-form-control>
             </nz-form-item>
@@ -415,6 +440,91 @@ import {
               </nz-form-control>
             </nz-form-item>
           </div>
+        </form>
+      </ng-container>
+    </nz-modal>
+
+    <!-- 手动设置需求状态 / 确认立项触发研发弹窗 -->
+    <nz-modal
+      [nzVisible]="statusModalVisible()"
+      nzTitle="设置需求状态与自动研发联动"
+      [nzOkLoading]="submitting()"
+      nzOkText="确认保存状态"
+      (nzOnCancel)="statusModalVisible.set(false)"
+      (nzOnOk)="submitUpdateStatus()"
+    >
+      <ng-container *nzModalContent>
+        <form nz-form nzLayout="vertical">
+          <nz-form-item>
+            <nz-form-label nzRequired>目标业务状态</nz-form-label>
+            <nz-form-control>
+              <nz-select
+                name="stTarget"
+                [(ngModel)]="statusForm.status"
+                (ngModelChange)="onStatusTargetChange($event)"
+              >
+                <nz-option nzValue="submitted" nzLabel="已提交 · 待确认要做 (submitted)"></nz-option>
+                <nz-option nzValue="triaged" nzLabel="已分拣 · 待确认要做 (triaged)"></nz-option>
+                <nz-option nzValue="scheduled" nzLabel="确认要做 / 待排期 (scheduled)"></nz-option>
+                <nz-option nzValue="in_progress" nzLabel="进入研发 / 进行中 (in_progress)"></nz-option>
+                <nz-option nzValue="clarifying" nzLabel="澄清中 (clarifying)"></nz-option>
+                <nz-option nzValue="pending_ai" nzLabel="待 AI 跟进 (pending_ai)"></nz-option>
+                <nz-option nzValue="released" nzLabel="已上线 (released)"></nz-option>
+                <nz-option nzValue="closed" nzLabel="已关闭归档 (closed)"></nz-option>
+              </nz-select>
+            </nz-form-control>
+          </nz-form-item>
+
+          @if (statusForm.status !== 'closed' && statusForm.status !== 'released') {
+            <div class="as-subtle-box" style="margin-bottom: 14px;">
+              <label
+                nz-checkbox
+                name="stTriggerWork"
+                [(ngModel)]="statusForm.triggerStartWork"
+                [nzDisabled]="statusTargetAlreadyHasWork()"
+              >
+                <b>保存状态后立即创建开发任务，交由开发 Agent (Antigravity) 开始研发</b>
+              </label>
+              @if (statusTargetAlreadyHasWork()) {
+                <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                  该需求已有关联开发任务，本次仅修改需求状态字段。
+                </div>
+              } @else if (statusForm.triggerStartWork) {
+                <div style="margin-top: 8px;">
+                  <label nz-checkbox name="stPlanConfirm" [(ngModel)]="statusForm.planConfirmRequired">
+                    启用「方案确认门」（先生成技术方案供我确认，再修改代码）
+                  </label>
+                </div>
+              }
+            </div>
+          }
+
+          @if (statusForm.status === 'closed') {
+            <nz-form-item>
+              <nz-form-label nzRequired>关闭原因</nz-form-label>
+              <nz-form-control>
+                <nz-select name="stCloseReason" [(ngModel)]="statusForm.closeReason">
+                  <nz-option nzValue="rejected" nzLabel="拒绝采纳 (rejected)"></nz-option>
+                  <nz-option nzValue="duplicate" nzLabel="重复需求 (duplicate)"></nz-option>
+                  <nz-option nzValue="deferred" nzLabel="暂不处理 / 延后 (deferred)"></nz-option>
+                  <nz-option nzValue="answered" nzLabel="咨询已解答 (answered)"></nz-option>
+                </nz-select>
+              </nz-form-control>
+            </nz-form-item>
+          }
+
+          <nz-form-item style="margin-bottom: 0;">
+            <nz-form-label>状态变更说明（可选，记入需求时间线）</nz-form-label>
+            <nz-form-control>
+              <textarea
+                nz-input
+                name="stNote"
+                rows="2"
+                [(ngModel)]="statusForm.note"
+                placeholder="例如：已确认要做，进入研发排期"
+              ></textarea>
+            </nz-form-control>
+          </nz-form-item>
         </form>
       </ng-container>
     </nz-modal>
@@ -669,12 +779,17 @@ import {
               </div>
 
               <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button nz-button nzSize="small" (click)="openStatusModal(req)">修改状态</button>
                 @if (req.status !== 'closed' && req.status !== 'released') {
                   <button nz-button nzSize="small" (click)="openTriageModal(req)">分拣定级</button>
                   <button nz-button nzSize="small" (click)="openLinkModal(req)">关联相似需求</button>
                   <button nz-button nzDanger nzSize="small" (click)="openCloseModal(req)">关闭归档</button>
                 }
-                @if (canStartWork(req)) {
+                @if (isAwaitingConfirmToDo(req)) {
+                  <button nz-button nzType="primary" nzSize="small" (click)="openConfirmToDoModal(req)">
+                    <span nz-icon nzType="check-circle"></span>确认要做并开始研发
+                  </button>
+                } @else if (canStartWork(req)) {
                   <button nz-button nzType="primary" nzSize="small" (click)="openStartWorkModal(req)">
                     <span nz-icon nzType="play-circle"></span>点“开工”启动开发
                   </button>
@@ -1044,6 +1159,8 @@ export class RequirementsComponent implements OnInit {
 
   // 弹窗与抽屉可见性
   readonly createModalVisible = signal<boolean>(false);
+  readonly statusModalVisible = signal<boolean>(false);
+  readonly statusTargetAlreadyHasWork = signal<boolean>(false);
   readonly triageModalVisible = signal<boolean>(false);
   readonly startWorkModalVisible = signal<boolean>(false);
   readonly linkModalVisible = signal<boolean>(false);
@@ -1051,6 +1168,11 @@ export class RequirementsComponent implements OnInit {
   readonly drawerVisible = signal<boolean>(false);
   readonly detailLoading = signal<boolean>(false);
   readonly detail = signal<RequirementDetailBundle | null>(null);
+
+  // 全局研发自动流转策略状态缓存
+  readonly autoStartNewEnabled = signal<boolean>(false);
+  readonly autoStartOnConfirmEnabled = signal<boolean>(true);
+  readonly defaultPlanConfirmEnabled = signal<boolean>(true);
 
   // 原型沙箱选择状态
   readonly selectedPrototypeIdx = signal<number>(0);
@@ -1085,10 +1207,19 @@ export class RequirementsComponent implements OnInit {
     issueType: 'feature',
     title: '',
     priority: 'P2',
+    status: 'submitted',
     description: '',
     acceptanceCriteria: '',
     expectedBehavior: '',
     reproSteps: ''
+  };
+
+  statusForm = {
+    status: 'in_progress',
+    triggerStartWork: true,
+    planConfirmRequired: true,
+    closeReason: 'deferred',
+    note: ''
   };
 
   triageForm = {
@@ -1132,6 +1263,16 @@ export class RequirementsComponent implements OnInit {
   ngOnInit(): void {
     this.api.listProducts().subscribe({
       next: (list) => this.products.set(list),
+      error: () => {}
+    });
+    this.api.getSystemSettings().subscribe({
+      next: (s) => {
+        if (s?.workflow) {
+          this.autoStartNewEnabled.set(Boolean(s.workflow.autoStartOnNewRequirement));
+          this.autoStartOnConfirmEnabled.set(s.workflow.autoStartOnConfirmStatus !== false);
+          this.defaultPlanConfirmEnabled.set(s.workflow.defaultPlanConfirm !== false);
+        }
+      },
       error: () => {}
     });
     this.loadList();
@@ -1233,6 +1374,24 @@ export class RequirementsComponent implements OnInit {
   }
 
   /**
+   * 判断需求是否处于刚收到、等待人工确认是否要做的初始阶段（submitted / triaged / clarifying / pending_ai）。
+   * @param item 需求对象
+   * @returns 是否处于待确认立项阶段
+   */
+  isAwaitingConfirmToDo(item: RequirementItem): boolean {
+    const st = (item.status || '').toLowerCase();
+    return st === 'submitted' || st === 'triaged' || st === 'clarifying' || st === 'pending_ai';
+  }
+
+  /**
+   * 跳转到系统设置页的全局研发流转策略面板。
+   * @returns void
+   */
+  jumpToWorkflowSettings(): void {
+    void this.router.navigate(['/settings']);
+  }
+
+  /**
    * 判断当前需求是否处于允许点击“开工”的状态。
    * @param item 需求记录
    * @returns 是否可发起开发任务
@@ -1317,6 +1476,7 @@ export class RequirementsComponent implements OnInit {
       issueType: 'feature',
       title: '',
       priority: 'P2',
+      status: this.autoStartNewEnabled() ? 'in_progress' : 'submitted',
       description: '',
       acceptanceCriteria: '',
       expectedBehavior: '',
@@ -1424,6 +1584,102 @@ export class RequirementsComponent implements OnInit {
         this.message.error(err.message || '读取需求详情失败');
       }
     });
+  }
+
+  /**
+   * 打开手动修改需求状态弹窗（支持修改为任意合法业务状态并按需联动启动开发任务）。
+   * @param item 目标需求记录
+   * @returns void
+   */
+  openStatusModal(item: RequirementItem): void {
+    this.activeRequirementId = item.id;
+    const hasWork = Boolean(item.activeWorkItemId && item.activeWorkItemId > 0);
+    this.statusTargetAlreadyHasWork.set(hasWork);
+    const prod = this.products().find((p) => p.id === item.productId);
+    const curStatus = item.status || 'submitted';
+    this.statusForm = {
+      status: curStatus,
+      triggerStartWork: !hasWork && curStatus === 'in_progress',
+      planConfirmRequired: prod ? prod.planConfirmDefault : this.defaultPlanConfirmEnabled(),
+      closeReason: (item.closeReason as any) || 'deferred',
+      note: ''
+    };
+    this.statusModalVisible.set(true);
+  }
+
+  /**
+   * 打开“确认要做”快捷弹窗：默认将需求状态切为研发进行中（in_progress）并勾选立即启动 Antigravity 开发任务。
+   * @param item 待确认的新需求记录
+   * @returns void
+   */
+  openConfirmToDoModal(item: RequirementItem): void {
+    this.activeRequirementId = item.id;
+    const hasWork = Boolean(item.activeWorkItemId && item.activeWorkItemId > 0);
+    this.statusTargetAlreadyHasWork.set(hasWork);
+    const prod = this.products().find((p) => p.id === item.productId);
+    const shouldAutoDev = !hasWork && this.autoStartOnConfirmEnabled();
+    this.statusForm = {
+      status: shouldAutoDev ? 'in_progress' : 'scheduled',
+      triggerStartWork: shouldAutoDev,
+      planConfirmRequired: prod ? prod.planConfirmDefault : this.defaultPlanConfirmEnabled(),
+      closeReason: 'deferred',
+      note: '人工已确认要做'
+    };
+    this.statusModalVisible.set(true);
+  }
+
+  /**
+   * 当用户在状态弹窗切换目标状态时，根据系统配置自动联动“立即启动开发任务”默认勾选状态。
+   * @param nextStatus 选中的目标状态编码
+   * @returns void
+   */
+  onStatusTargetChange(nextStatus: string): void {
+    if (this.statusTargetAlreadyHasWork()) {
+      this.statusForm.triggerStartWork = false;
+      return;
+    }
+    if (nextStatus === 'in_progress') {
+      this.statusForm.triggerStartWork = true;
+    } else if (nextStatus === 'scheduled') {
+      this.statusForm.triggerStartWork = this.autoStartOnConfirmEnabled();
+    } else {
+      this.statusForm.triggerStartWork = false;
+    }
+  }
+
+  /**
+   * 提交手动状态变更（及可选联动启动研发任务）请求。
+   * @returns void
+   */
+  submitUpdateStatus(): void {
+    this.submitting.set(true);
+    this.api
+      .updateRequirementStatus(this.activeRequirementId, {
+        status: this.statusForm.status,
+        triggerStartWork: this.statusTargetAlreadyHasWork() ? false : this.statusForm.triggerStartWork,
+        planConfirmRequired: this.statusForm.planConfirmRequired,
+        closeReason: this.statusForm.closeReason,
+        note: this.statusForm.note
+      })
+      .subscribe({
+        next: (res) => {
+          this.submitting.set(false);
+          this.statusModalVisible.set(false);
+          if (res?.workItemId && res.workItemId > 0) {
+            this.message.success(`需求状态已更新并自动启动开发任务 #${res.workItemId}`);
+          } else {
+            this.message.success('需求状态已更新');
+          }
+          this.loadList();
+          if (this.drawerVisible() && this.detail()?.requirement?.id === this.activeRequirementId) {
+            this.refreshDetail(this.activeRequirementId);
+          }
+        },
+        error: (err: Error) => {
+          this.submitting.set(false);
+          this.message.error(err.message || '更新需求状态失败');
+        }
+      });
   }
 
   /**

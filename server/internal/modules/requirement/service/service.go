@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"autoship/internal/config"
 	integSvc "autoship/internal/modules/integration/service"
 	llmSvc "autoship/internal/modules/llm/service"
 	notifySvc "autoship/internal/modules/notify/service"
@@ -33,13 +34,14 @@ type ConversationReader interface {
 
 // Service 封装需求池核心业务编排。
 type Service struct {
-	repo        *repository.Repository
-	products    *prodSvc.Service
+	repo         *repository.Repository
+	cfg          *config.ServerConfig
+	products     *prodSvc.Service
 	integrations *integSvc.Service
-	llm         *llmSvc.Service
-	notifier    *notifySvc.Notifier
-	workStarter WorkStarter
-	convReader  ConversationReader
+	llm          *llmSvc.Service
+	notifier     *notifySvc.Notifier
+	workStarter  WorkStarter
+	convReader   ConversationReader
 }
 
 // New 创建需求池业务服务实例。
@@ -60,6 +62,12 @@ func New(
 	}
 }
 
+// SetConfig 注入服务端全局配置指针，用于读取需求研发自动流转开关与默认预算。
+// 参数 cfg 为全局配置实例；无返回值，在 router.Build 装配阶段调用。
+func (s *Service) SetConfig(cfg *config.ServerConfig) {
+	s.cfg = cfg
+}
+
 // SetCollaborators 注入开发任务启动器与澄清会话读取器。
 // 参数 ws 为开发任务接口，cr 为会话读取接口；无返回值。
 func (s *Service) SetCollaborators(ws WorkStarter, cr ConversationReader) {
@@ -67,7 +75,7 @@ func (s *Service) SetCollaborators(ws WorkStarter, cr ConversationReader) {
 	s.convReader = cr
 }
 
-// ManualCreateInput 定义管理后台手动录入需求的输入参数（阶段 2：手动录入后直接进入 scheduled 待排期，立即可点开工）。
+// ManualCreateInput 定义管理后台手动录入需求的输入参数（支持指定初始状态或跟随系统新增需求自动研发配置）。
 type ManualCreateInput struct {
 	ProductID          uint64 `json:"productId"`
 	ModuleCode         string `json:"moduleCode"`
@@ -75,6 +83,7 @@ type ManualCreateInput struct {
 	Title              string `json:"title"`
 	Priority           string `json:"priority"`
 	EffortSize         string `json:"effortSize"`
+	Status             string `json:"status"`
 	Description        string `json:"description"`
 	ExpectedBehavior   string `json:"expectedBehavior"`
 	ActualBehavior     string `json:"actualBehavior"`
@@ -83,7 +92,7 @@ type ManualCreateInput struct {
 	AcceptanceCriteria string `json:"acceptanceCriteria"`
 }
 
-// CreateManual 在管理后台手动创建一条结构化需求并置于 scheduled（待排期）状态。
+// CreateManual 在管理后台手动创建一条结构化需求；默认进入 submitted（待人工确认要做），若全局配置开启了新增需求自动研发或显式指定 in_progress 则自动创建开发任务。
 // 参数 in 为录入字段，actor 为管理员用户名；返回创建好的 *model.Requirement 与错误。
 func (s *Service) CreateManual(in ManualCreateInput, actor string) (*model.Requirement, error) {
 	if in.ProductID == 0 || strings.TrimSpace(in.Title) == "" {
@@ -94,7 +103,7 @@ func (s *Service) CreateManual(in ManualCreateInput, actor string) (*model.Requi
 		return nil, errors.New("目标产品不存在")
 	}
 	issueType := in.IssueType
-	if issueType != "bug" && issueType != "feature" {
+	if issueType != "bug" && issueType != "feature" && issueType != "improvement" {
 		issueType = "feature"
 	}
 	priority := in.Priority
@@ -104,6 +113,10 @@ func (s *Service) CreateManual(in ManualCreateInput, actor string) (*model.Requi
 	effort := in.EffortSize
 	if effort == "" {
 		effort = "M"
+	}
+	initStatus := strings.TrimSpace(in.Status)
+	if !isValidRequirementStatus(initStatus) {
+		initStatus = "submitted"
 	}
 	req := &model.Requirement{
 		ProductID:          in.ProductID,
@@ -119,7 +132,7 @@ func (s *Service) CreateManual(in ManualCreateInput, actor string) (*model.Requi
 		Priority:           priority,
 		EffortSize:         effort,
 		ReadinessScore:     90,
-		Status:             "scheduled",
+		Status:             initStatus,
 	}
 	if err := s.repo.Create(req); err != nil {
 		return nil, err
@@ -129,14 +142,19 @@ func (s *Service) CreateManual(in ManualCreateInput, actor string) (*model.Requi
 		RequirementID: req.ID,
 		EventType:     "manual_created",
 		FromStatus:    "",
-		ToStatus:      "scheduled",
+		ToStatus:      req.Status,
 		Actor:         actor,
-		Summary:       "管理员后台手动录入需求，进入待排期",
+		Summary:       fmt.Sprintf("管理员后台手动录入需求，初始状态：%s", req.Status),
 	})
+
+	autoNew, _, _, _, _, _ := s.workflowSettings(prod.PlanConfirmDefault)
+	if autoNew || initStatus == "in_progress" {
+		s.tryAutoStartWork(req, prod.PlanConfirmDefault, actor, "新增需求自动触发研发任务")
+	}
 	return req, nil
 }
 
-// SubmitFromIntake 由客服模块在提交人确认需求卡后调用，落库需求、绑定提出人、发送飞书通知并触发异步 AI 自动分拣。
+// SubmitFromIntake 由客服模块在提交人确认需求卡后调用，落库需求、绑定提出人、发送飞书通知；若开启新增自动进入研发则自动派单，否则触发 AI 分拣并等待人工确认要做。
 // 参数 req 为草稿转换的需求实体，rep 为提出人信息；返回新建的需求指针与错误。
 func (s *Service) SubmitFromIntake(req *model.Requirement, rep *model.RequirementReporter) (*model.Requirement, error) {
 	req.Status = "submitted"
@@ -164,6 +182,22 @@ func (s *Service) SubmitFromIntake(req *model.Requirement, rep *model.Requiremen
 			fmt.Sprintf("类型：%s ｜ 模块：%s", req.IssueType, req.ModuleCode),
 		)
 	}
+
+	prodPlanConfirm := true
+	if prod, pErr := s.products.GetByID(req.ProductID); pErr == nil && prod != nil {
+		prodPlanConfirm = prod.PlanConfirmDefault
+	}
+	autoNew, _, _, _, _, _ := s.workflowSettings(prodPlanConfirm)
+	if autoNew {
+		// 开启“新增需求自动进入研发状态”时：若模型在线先快速补齐模块/优先级，随后立即创建开发任务进入 in_progress
+		s.AutoTriageOne(req.ID)
+		if latest, gErr := s.repo.GetByID(req.ID); gErr == nil && latest != nil {
+			req = latest
+		}
+		s.tryAutoStartWork(req, prodPlanConfirm, "system", "系统配置已开启新增需求自动进入研发状态")
+		return req, nil
+	}
+
 	go s.AutoTriageOne(req.ID)
 	return req, nil
 }
@@ -373,7 +407,7 @@ func (s *Service) ManualTriage(id uint64, in TriageInput, actor string) (*model.
 	if in.ReadinessScore > 0 {
 		req.ReadinessScore = in.ReadinessScore
 	}
-	if in.Status == "triaged" || in.Status == "scheduled" {
+	if in.Status == "triaged" || in.Status == "scheduled" || in.Status == "in_progress" {
 		req.Status = in.Status
 	} else if req.Status == "submitted" {
 		req.Status = "scheduled"
@@ -394,7 +428,112 @@ func (s *Service) ManualTriage(id uint64, in TriageInput, actor string) (*model.
 	if prev != req.Status {
 		s.emitReporterEvent(req, "issue.status_changed")
 	}
+
+	prodPlanConfirm := true
+	if prod, pErr := s.products.GetByID(req.ProductID); pErr == nil && prod != nil {
+		prodPlanConfirm = prod.PlanConfirmDefault
+	}
+	_, autoConfirm, _, _, _, _ := s.workflowSettings(prodPlanConfirm)
+	if req.ActiveWorkItemID == 0 && (req.Status == "in_progress" || (req.Status == "scheduled" && prev != "scheduled" && autoConfirm)) {
+		s.tryAutoStartWork(req, prodPlanConfirm, actor, "人工分拣确认要做，自动启动研发任务")
+	}
 	return req, nil
+}
+
+// UpdateStatusInput 定义管理员手动设置单条需求业务状态及可选自动开工参数。
+type UpdateStatusInput struct {
+	Status              string `json:"status"`              // 目标状态：clarifying/pending_ai/submitted/triaged/scheduled/in_progress/released/closed
+	TriggerStartWork    *bool  `json:"triggerStartWork"`    // 是否在改状态的同时立即启动开发任务（nil 时按目标状态与全局配置自动判断）
+	PlanConfirmRequired *bool  `json:"planConfirmRequired"` // 触发开发时是否开启方案确认门（nil 时取产品/全局默认）
+	CloseReason         string `json:"closeReason"`         // 目标状态为 closed 时的关闭原因（默认 deferred）
+	Note                string `json:"note"`                // 状态修改说明备注
+}
+
+// UpdateStatus 允许管理员手动将任意需求设置为指定业务状态，并在确认进入 scheduled/in_progress 时按策略启动研发任务。
+// 参数 id 为需求主键，in 为目标状态与联动开关，actor 为管理员账号；返回更新后的需求、可能新建的 workItemId 及错误。
+func (s *Service) UpdateStatus(id uint64, in UpdateStatusInput, actor string) (*model.Requirement, uint64, error) {
+	targetStatus := strings.TrimSpace(in.Status)
+	if !isValidRequirementStatus(targetStatus) {
+		return nil, 0, errors.New("不合法的需求状态编码")
+	}
+	req, err := s.repo.GetByID(id)
+	if err != nil || req == nil {
+		return nil, 0, errors.New("需求不存在")
+	}
+
+	prev := req.Status
+	req.Status = targetStatus
+	req.TriagePending = false
+
+	// 支持管理员手动把已关闭归档的需求重新打开，或手动置为 closed
+	if targetStatus == "closed" {
+		reason := strings.TrimSpace(in.CloseReason)
+		switch reason {
+		case "rejected", "duplicate", "deferred", "answered":
+		default:
+			reason = "deferred"
+		}
+		req.CloseReason = reason
+		req.CloseNote = strings.TrimSpace(in.Note)
+		req.Archived = true
+	} else {
+		req.Archived = false
+		req.CloseReason = ""
+		req.CloseNote = ""
+	}
+
+	if err := s.repo.Save(req); err != nil {
+		return nil, 0, err
+	}
+
+	summary := fmt.Sprintf("管理员手动修改需求状态：%s -> %s", prev, targetStatus)
+	if strings.TrimSpace(in.Note) != "" {
+		summary += "（备注：" + strings.TrimSpace(in.Note) + "）"
+	}
+	_ = s.repo.AppendEvent(&model.RequirementEvent{
+		ProductID:     req.ProductID,
+		RequirementID: req.ID,
+		EventType:     "status_changed",
+		FromStatus:    prev,
+		ToStatus:      targetStatus,
+		Actor:         actor,
+		Summary:       summary,
+	})
+	if prev != targetStatus {
+		s.emitReporterEvent(req, "issue.status_changed")
+	}
+
+	prodPlanConfirm := true
+	if prod, pErr := s.products.GetByID(req.ProductID); pErr == nil && prod != nil {
+		prodPlanConfirm = prod.PlanConfirmDefault
+	}
+	_, autoConfirm, defPlanConfirm, tokBudget, maxTurns, maxMins := s.workflowSettings(prodPlanConfirm)
+	planConfirm := defPlanConfirm
+	if in.PlanConfirmRequired != nil {
+		planConfirm = *in.PlanConfirmRequired
+	}
+
+	shouldStart := false
+	if in.TriggerStartWork != nil {
+		shouldStart = *in.TriggerStartWork
+	} else if targetStatus == "in_progress" {
+		shouldStart = true
+	} else if targetStatus == "scheduled" && prev != "scheduled" && prev != "in_progress" && autoConfirm {
+		shouldStart = true
+	}
+
+	var createdWorkID uint64
+	if shouldStart && req.ActiveWorkItemID == 0 && targetStatus != "closed" && targetStatus != "released" {
+		workID, startErr := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, actor)
+		if startErr != nil {
+			return nil, 0, startErr
+		}
+		createdWorkID = workID
+		if refreshed, rErr := s.repo.GetByID(req.ID); rErr == nil && refreshed != nil {
+			req = refreshed
+		}
+	}
+	return req, createdWorkID, nil
 }
 
 // LinkSimilar 人工建立相似或关联需求关系。
@@ -575,4 +714,59 @@ func extractJSONObject(text string) string {
 		return text[start : end+1]
 	}
 	return text
+}
+
+// isValidRequirementStatus 校验给定的需求业务状态编码是否属于平台合法枚举；参数 st 为状态编码；合法返回 true，否则返回 false。
+func isValidRequirementStatus(st string) bool {
+	switch st {
+	case "clarifying", "pending_ai", "submitted", "triaged", "scheduled", "in_progress", "released", "closed":
+		return true
+	default:
+		return false
+	}
+}
+
+// workflowSettings 读取全局研发自动流转开关与默认预算配置（配置为空时回退安全默认值）；参数 prodPlanConfirm 为产品级方案确认门默认值；返回各策略字段。
+func (s *Service) workflowSettings(prodPlanConfirm bool) (autoNew, autoConfirm, planConfirm bool, tokenBudget, maxTurns, maxMins int) {
+	if s.cfg == nil {
+		return false, true, prodPlanConfirm, 400000, 60, 90
+	}
+	wf := s.cfg.Workflow
+	tok := wf.DefaultTokenBudget
+	if tok <= 0 {
+		tok = 400000
+	}
+	turns := wf.DefaultMaxTurns
+	if turns <= 0 {
+		turns = 60
+	}
+	mins := wf.DefaultMaxMinutes
+	if mins <= 0 {
+		mins = 90
+	}
+	return wf.AutoStartOnNewRequirement, wf.AutoStartOnConfirmStatus, wf.DefaultPlanConfirm && prodPlanConfirm, tok, turns, mins
+}
+
+// tryAutoStartWork 在自动流转场景下尝试为指定需求创建并派发开发任务；若产品未开启自动开发则写入时间线说明而不中断主流程。
+// 参数 req 为需求指针，prodPlanConfirm 为产品方案确认默认值，actor 为触发主体，reason 为时间线说明；无返回值。
+func (s *Service) tryAutoStartWork(req *model.Requirement, prodPlanConfirm bool, actor, reason string) {
+	if req == nil || s.workStarter == nil || req.ActiveWorkItemID > 0 {
+		return
+	}
+	_, _, planConfirm, tokBudget, maxTurns, maxMins := s.workflowSettings(prodPlanConfirm)
+	workID, err := s.StartWork(req.ID, planConfirm, tokBudget, maxTurns, maxMins, actor)
+	if err != nil {
+		_ = s.repo.AppendEvent(&model.RequirementEvent{
+			ProductID:     req.ProductID,
+			RequirementID: req.ID,
+			EventType:     "auto_start_skipped",
+			FromStatus:    req.Status,
+			ToStatus:      req.Status,
+			Actor:         actor,
+			Summary:       fmt.Sprintf("%s暂未派单：%s", reason, err.Error()),
+		})
+		return
+	}
+	req.Status = "in_progress"
+	req.ActiveWorkItemID = workID
 }

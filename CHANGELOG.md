@@ -2,6 +2,14 @@
 
 所有版本的显著变更均记录于此文件。
 
+## [v0.2.0] - 2026-11-19
+
+### 新增
+- **开发引擎接入本机 Antigravity CLI (`agy`)**：新增 `AgyExecutor`（`engine.driver: "agy"`），支持 `autoship-dev-agent` 通过 WSS 实时接收开发任务后直接调度本机 `agy` 完成规格拆解、方案确认门、长会话编码、构建测试与内置门禁自检修复、独立安全评审及公共区影响审计。
+- **需求状态自由设置与研发自动流转策略**：
+  - 新增 `POST /api/v1/admin/requirements/:id/status` 接口与需求池「改状态 / 确认要做」弹窗，支持手动将任意需求设为任意合法状态，并在确认要做进入研发时联动创建开发任务；
+  - 新增系统全局配置项 `workflow.autoStartOnNewRequirement` 与 `workflow.autoStartOnConfirmStatus`（后台「系统设置 -> 研发流转 · 模型通道 · 飞书 · PKI」可视化配置并持久化）：默认新需求先待人工确认改状态再开发，开启后新增需求将自动进入 `in_progress` 研发状态并派发开发 Agent。
+
 ## [v0.1.3] - 2026-11-18
 
 ### 新增

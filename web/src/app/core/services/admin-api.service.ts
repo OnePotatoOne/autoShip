@@ -181,6 +181,30 @@ export class AdminApiService {
   }
 
   /**
+   * 手动修改单条需求的业务状态，并支持在确认进入研发状态时联动启动开发任务。
+   * @param id 需求主键 ID
+   * @param payload 目标状态编码、是否立即启动开发任务、方案确认门开关、关闭原因与备注
+   * @returns 返回包含更新后 `requirement` 与可选 `workItemId` 的结果流；供需求池状态弹窗与确认立项按钮调用
+   */
+  updateRequirementStatus(
+    id: number,
+    payload: {
+      status: string;
+      triggerStartWork?: boolean;
+      planConfirmRequired?: boolean;
+      closeReason?: string;
+      note?: string;
+    }
+  ): Observable<{ requirement: RequirementItem; workItemId?: number }> {
+    return this.unwrap(
+      this.http.post<ApiEnvelope<{ requirement: RequirementItem; workItemId?: number }>>(
+        `/api/v1/admin/requirements/${id}/status`,
+        payload
+      )
+    );
+  }
+
+  /**
    * 建立当前需求与另一相似/重复需求的关联关系。
    * @param id 当前需求主键 ID
    * @param payload 目标需求 ID 与关联类型（如 similar / duplicate / related）

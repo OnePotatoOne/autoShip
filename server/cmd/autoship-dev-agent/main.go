@@ -80,7 +80,7 @@ func main() {
 		return
 	}
 
-	if err := runAgentService(ctx, cfg, secrets); err != nil {
+	if err := runAgentService(ctx, *cfgPath, cfg, secrets); err != nil {
 		log.Fatalf("开发 Agent 异常退出: %v", err)
 	}
 }
@@ -173,8 +173,8 @@ func runStartupSelfCheck(ctx context.Context, cfg *config.AgentConfig, secrets k
 }
 
 // runAgentService 组装工作区、端口池、进程表、防休眠、模型中继、预览管理器、发布流水线与 WSS 守护进程并阻塞运行直至收到退出信号。
-// 参数 ctx 为信号上下文，cfg 为全局配置，secrets 为钥匙串接口；返回致命启动错误。
-func runAgentService(ctx context.Context, cfg *config.AgentConfig, secrets keychain.Store) error {
+// 参数 ctx 为信号上下文，cfgPath 为配置文件路径，cfg 为全局配置，secrets 为钥匙串接口；返回致命启动错误。
+func runAgentService(ctx context.Context, cfgPath string, cfg *config.AgentConfig, secrets keychain.Store) error {
 	wsMgr, err := workspace.NewManager(cfg.RootDir)
 	if err != nil {
 		return err
@@ -211,7 +211,13 @@ func runAgentService(ctx context.Context, cfg *config.AgentConfig, secrets keych
 		beforeModelHook = relaySrv.WaitUntilIntakeIdle
 	}
 
-	devEng := engine.NewDevEngine(cfg, secrets, beforeModelHook)
+	var devEng engine.Executor
+	if strings.EqualFold(strings.TrimSpace(cfg.Engine.Driver), "agy") {
+		devEng = engine.NewAgyExecutor(cfg)
+		log.Printf("[INFO] 开发任务引擎已切换至本机 Antigravity CLI (agy): %s", engine.ResolveAgyBinaryPath(cfg.Engine.AgyBinaryPath))
+	} else {
+		devEng = engine.NewDevEngine(cfg, secrets, beforeModelHook)
+	}
 	pvMgr := preview.NewManager(cfg, ports, procs, inhibitor, dbMgr)
 	pvMgr.StartIdleReaperLoop(ctx, 5*time.Minute)
 	defer pvMgr.StopAll(context.Background())
@@ -225,6 +231,7 @@ func runAgentService(ctx context.Context, cfg *config.AgentConfig, secrets keych
 	if err != nil {
 		return err
 	}
+	agentDaemon.SetConfigPath(cfgPath)
 	if err := agentDaemon.BootstrapRegisterIfNeeded(ctx); err != nil {
 		return err
 	}

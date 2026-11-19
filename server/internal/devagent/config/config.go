@@ -26,15 +26,26 @@ type AgentConfig struct {
 	MaxParallelTasks   int                `yaml:"maxParallelTasks" json:"maxParallelTasks"`     // 最大并行开发任务数（16GB 内存默认 1）
 	KeychainService    string             `yaml:"keychainService" json:"keychainService"`       // macOS 钥匙串默认服务命名空间
 	HTTPProxy          string             `yaml:"httpProxy" json:"httpProxy"`                   // 访问 GitHub / 依赖源时的可选本地 HTTP/SOCKS 代理地址
-	ChromeBinaryPath   string             `yaml:"chromeBinaryPath" json:"chromeBinaryPath"`     // 本机已安装 Google Chrome 可执行文件路径（留空自动探测）
-	FeishuWebhookURL   string             `yaml:"feishuWebhookUrl" json:"feishuWebhookUrl"`     // 飞书自定义机器人 Webhook 地址（ask_owner 通知用）
-	Relay              RelayConfig        `yaml:"relay" json:"relay"`                           // 模型受限中继服务配置（7.5 节）
+	ChromeBinaryPath   string              `yaml:"chromeBinaryPath" json:"chromeBinaryPath"`     // 本机已安装 Google Chrome 可执行文件路径（留空自动探测）
+	FeishuWebhookURL   string              `yaml:"feishuWebhookUrl" json:"feishuWebhookUrl"`     // 飞书自定义机器人 Webhook 地址（ask_owner 通知用）
+	Engine             EngineBackendConfig `yaml:"engine" json:"engine"`                         // 开发任务编码执行器配置（支持 builtin 自研引擎或 agy Antigravity CLI）
+	Relay              RelayConfig         `yaml:"relay" json:"relay"`                           // 模型受限中继服务配置（7.5 节）
 	Models             ModelsConfig       `yaml:"models" json:"models"`                         // 本地/备选大模型通道池与任务预算配置（8.1 & 8.4 节）
 	WorkspaceDB        TestDBAdminConfig  `yaml:"workspaceDb" json:"workspaceDb"`               // 测试库与预览库动态创建/销毁的管理连接配置（8.2 节）
 	StateDB            LocalStateDBConfig `yaml:"stateDb" json:"stateDb"`                       // Agent 自身独立状态库 autoship_agent 配置（8.1 节）
 	PortPool           PortPoolConfig     `yaml:"portPool" json:"portPool"`                     // 测试与预览实例端口池范围
 	Preview            PreviewGlobalCfg   `yaml:"preview" json:"preview"`                       // 预览实例全局生命周期配置
 	Products           []ProductProfile   `yaml:"products" json:"products"`                     // 本地静态兜底产品档案列表（运行时可由 Server 指令动态覆盖）
+}
+
+// EngineBackendConfig 定义开发任务底层编码引擎模式与本机 Antigravity CLI (`agy`) 集成参数。
+type EngineBackendConfig struct {
+	Driver         string `yaml:"driver" json:"driver"`                 // 编码驱动：builtin（内置自研会话引擎）或 agy（调用本机 Antigravity CLI 执行研发）
+	AgyBinaryPath  string `yaml:"agyBinaryPath" json:"agyBinaryPath"`   // agy CLI 可执行文件路径（留空自动探测 ~/.local/bin/agy 与 PATH）
+	AgyModel       string `yaml:"agyModel" json:"agyModel"`             // 可选指定 Antigravity 会话模型名（留空使用 agy 默认配置）
+	AgyEffort      string `yaml:"agyEffort" json:"agyEffort"`           // 可选推理强度（low/medium/high/xhigh/max，留空使用默认）
+	AgyAutoApprove *bool  `yaml:"agyAutoApprove" json:"agyAutoApprove"` // 无人值守研发模式下是否自动放行 agy 工具调用（nil 时默认 true，由 autoShip 外层隔离 worktree 与门禁把关）
+	AgySandbox     bool   `yaml:"agySandbox" json:"agySandbox"`         // 是否叠加启用 agy 自身的 --sandbox 标志（默认 false）
 }
 
 // RelayConfig 定义开发 Agent 在 tailnet 地址上暴露的受限模型中继服务配置（7.5 节）。
@@ -198,6 +209,9 @@ func Default() *AgentConfig {
 		RootDir:          rootDir,
 		MaxParallelTasks: 1,
 		KeychainService:  "autoship.devagent",
+		Engine: EngineBackendConfig{
+			Driver: "builtin",
+		},
 		Relay: RelayConfig{
 			Enabled:               true,
 			ListenAddr:            "127.0.0.1:8445",
@@ -330,6 +344,16 @@ func (c *AgentConfig) ApplyDefaults() {
 	if strings.TrimSpace(c.KeychainService) == "" {
 		c.KeychainService = "autoship.devagent"
 	}
+	if strings.TrimSpace(c.Engine.Driver) == "" {
+		c.Engine.Driver = "builtin"
+	} else {
+		c.Engine.Driver = strings.ToLower(strings.TrimSpace(c.Engine.Driver))
+	}
+	c.Engine.AgyBinaryPath = ExpandPath(c.Engine.AgyBinaryPath)
+	if c.Engine.AgyAutoApprove == nil {
+		defaultAuto := true
+		c.Engine.AgyAutoApprove = &defaultAuto
+	}
 	if c.Relay.CertFile == "" {
 		c.Relay.CertFile = filepath.Join(c.RootDir, "pki", "agent.crt")
 	} else {
@@ -390,8 +414,14 @@ func (c *AgentConfig) Validate() error {
 	if strings.TrimSpace(c.ServerURL) != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.ServerURL)), "https://") {
 		return errors.New("serverUrl 必须使用 https://（设计文档第 2 节禁止明文 HTTP）")
 	}
-	if len(c.Models.Profiles) == 0 {
-		return errors.New("models.profiles 至少需要配置一个模型通道")
+	switch strings.ToLower(strings.TrimSpace(c.Engine.Driver)) {
+	case "", "builtin", "agy":
+	default:
+		return fmt.Errorf("engine.driver 非法: %q（仅支持 builtin 或 agy）", c.Engine.Driver)
+	}
+	isAgy := strings.EqualFold(strings.TrimSpace(c.Engine.Driver), "agy")
+	if (!isAgy || c.Relay.Enabled) && len(c.Models.Profiles) == 0 {
+		return errors.New("启用 builtin 引擎或 relay 中继时，models.profiles 至少需要配置一个模型通道")
 	}
 	for _, p := range c.Models.Profiles {
 		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.BaseURL) == "" || strings.TrimSpace(p.Model) == "" {

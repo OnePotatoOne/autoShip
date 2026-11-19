@@ -55,10 +55,21 @@ func (s *Service) List(f repository.ListFilter) ([]model.AuditLog, int64, error)
 
 // SystemSettingsView 表示面向管理后台展示的脱敏全局设置视图。
 type SystemSettingsView struct {
-	LLM               LLMSettingsView    `json:"llm"`               // 模型调用设置
-	Notify            NotifySettingsView `json:"notify"`            // 飞书通知设置
-	PKI               PKISettingsView    `json:"pki"`               // 证书与监听地址只读视图
-	ArtifactKeepCount int                `json:"artifactKeepCount"` // 制品保留份数
+	LLM               LLMSettingsView      `json:"llm"`               // 模型调用设置
+	Notify            NotifySettingsView   `json:"notify"`            // 飞书通知设置
+	Workflow          WorkflowSettingsView `json:"workflow"`          // 需求自动进入研发与状态流转策略
+	PKI               PKISettingsView      `json:"pki"`               // 证书与监听地址只读视图
+	ArtifactKeepCount int                  `json:"artifactKeepCount"` // 制品保留份数
+}
+
+// WorkflowSettingsView 表示面向管理后台展示的需求研发流转自动化配置视图。
+type WorkflowSettingsView struct {
+	AutoStartOnNewRequirement bool `json:"autoStartOnNewRequirement"` // 新增需求是否无需人工确认直接自动进入研发状态
+	AutoStartOnConfirmStatus  bool `json:"autoStartOnConfirmStatus"`  // 人工确认立项改状态（scheduled/in_progress）后是否自动启动开发任务
+	DefaultPlanConfirm        bool `json:"defaultPlanConfirm"`        // 自动触发研发时是否默认开启方案确认门
+	DefaultTokenBudget        int  `json:"defaultTokenBudget"`        // 默认单任务 Token 预算
+	DefaultMaxTurns           int  `json:"defaultMaxTurns"`           // 默认单任务最大轮数
+	DefaultMaxMinutes         int  `json:"defaultMaxMinutes"`         // 默认单任务最大分钟数
 }
 
 // LLMSettingsView 表示脱敏后的模型通道配置视图。
@@ -103,6 +114,14 @@ type UpdateSettingsInput struct {
 		FeishuWebhookURL string `json:"feishuWebhookURL"`
 		Enabled          bool   `json:"enabled"`
 	} `json:"notify"`
+	Workflow *struct {
+		AutoStartOnNewRequirement bool `json:"autoStartOnNewRequirement"`
+		AutoStartOnConfirmStatus  bool `json:"autoStartOnConfirmStatus"`
+		DefaultPlanConfirm        bool `json:"defaultPlanConfirm"`
+		DefaultTokenBudget        int  `json:"defaultTokenBudget"`
+		DefaultMaxTurns           int  `json:"defaultMaxTurns"`
+		DefaultMaxMinutes         int  `json:"defaultMaxMinutes"`
+	} `json:"workflow"`
 	ArtifactKeepCount int `json:"artifactKeepCount"`
 }
 
@@ -123,6 +142,14 @@ func (s *Service) GetSettingsView(caFingerprint string) SystemSettingsView {
 		Notify: NotifySettingsView{
 			FeishuWebhookURL: s.cfg.Notify.FeishuWebhookURL,
 			Enabled:          s.cfg.Notify.Enabled,
+		},
+		Workflow: WorkflowSettingsView{
+			AutoStartOnNewRequirement: s.cfg.Workflow.AutoStartOnNewRequirement,
+			AutoStartOnConfirmStatus:  s.cfg.Workflow.AutoStartOnConfirmStatus,
+			DefaultPlanConfirm:        s.cfg.Workflow.DefaultPlanConfirm,
+			DefaultTokenBudget:        s.cfg.Workflow.DefaultTokenBudget,
+			DefaultMaxTurns:           s.cfg.Workflow.DefaultMaxTurns,
+			DefaultMaxMinutes:         s.cfg.Workflow.DefaultMaxMinutes,
 		},
 		PKI: PKISettingsView{
 			CAFingerprint:     caFingerprint,
@@ -165,6 +192,31 @@ func (s *Service) UpdateSettings(in UpdateSettingsInput, actor string) error {
 	s.cfg.Notify.Enabled = in.Notify.Enabled
 	if in.ArtifactKeepCount > 0 {
 		s.cfg.ArtifactKeepCount = in.ArtifactKeepCount
+	}
+	if in.Workflow != nil {
+		s.cfg.Workflow.AutoStartOnNewRequirement = in.Workflow.AutoStartOnNewRequirement
+		s.cfg.Workflow.AutoStartOnConfirmStatus = in.Workflow.AutoStartOnConfirmStatus
+		s.cfg.Workflow.DefaultPlanConfirm = in.Workflow.DefaultPlanConfirm
+		if in.Workflow.DefaultTokenBudget > 0 {
+			s.cfg.Workflow.DefaultTokenBudget = in.Workflow.DefaultTokenBudget
+		}
+		if in.Workflow.DefaultMaxTurns > 0 {
+			s.cfg.Workflow.DefaultMaxTurns = in.Workflow.DefaultMaxTurns
+		}
+		if in.Workflow.DefaultMaxMinutes > 0 {
+			s.cfg.Workflow.DefaultMaxMinutes = in.Workflow.DefaultMaxMinutes
+		}
+		autoNewVal := "false"
+		if s.cfg.Workflow.AutoStartOnNewRequirement {
+			autoNewVal = "true"
+		}
+		_ = s.repo.UpsertSetting(&model.Setting{
+			ProductID:   0,
+			SettingKey:  "workflow_auto_start_new_requirement",
+			SettingVal:  autoNewVal,
+			Description: "新增需求是否自动进入研发状态",
+			UpdatedBy:   actor,
+		})
 	}
 
 	_ = s.repo.UpsertSetting(&model.Setting{

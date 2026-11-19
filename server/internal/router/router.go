@@ -106,6 +106,7 @@ func Build(cfg *config.ServerConfig, cfgPath string, encKey []byte, ca *pki.Bund
 
 	rqR := reqRepo.New(dbProvider)
 	rqS := reqSvc.New(rqR, prS, inS, llS, notifier)
+	rqS.SetConfig(cfg)
 	rqH := reqHandler.New(rqS)
 
 	ikR := intakeRepo.New(dbProvider)
